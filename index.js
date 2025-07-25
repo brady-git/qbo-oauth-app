@@ -14,13 +14,13 @@ const redirect_uri = process.env.REDIRECT_URI;
 
 // Snowflake connection setup
 const sfConnection = snowflake.createConnection({
-  account:   process.env.example.SNOWFLAKE_ACCOUNT,
-  username:  process.env.example.SNOWFLAKE_USERNAME,
-  password:  process.env.example.SNOWFLAKE_PASSWORD,
-  warehouse: process.env.example.SNOWFLAKE_WAREHOUSE,
-  database:  process.env.example.SNOWFLAKE_DATABASE,
-  schema:    process.env.example.SNOWFLAKE_SCHEMA,
-  role:      process.env.example.SNOWFLAKE_ROLE // optional
+  account:   process.env.SNOWFLAKE_ACCOUNT,
+  username:  process.env.SNOWFLAKE_USERNAME,
+  password:  process.env.SNOWFLAKE_PASSWORD,
+  warehouse: process.env.SNOWFLAKE_WAREHOUSE,
+  database:  process.env.SNOWFLAKE_DATABASE,
+  schema:    process.env.SNOWFLAKE_SCHEMA,
+  role:      process.env.SNOWFLAKE_ROLE // optional
 });
 
 // Connect to Snowflake on startup
