@@ -72,7 +72,7 @@ app.get("/report", async (req, res) => {
 
   try {
     const result = await axios.get(
-      `https://quickbooks.api.intuit.com/v3/company/${realm_id}/reports/AgedReceivablesSummary`,
+      `https://quickbooks.api.intuit.com/v3/company/${realm_id}/reports/AgedReceivables`,
       {
         headers: {
           Authorization: `Bearer ${access_token}`,
