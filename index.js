@@ -22,7 +22,7 @@ let realm_id = null;
 const reports = {
   AgedReceivables: {
     file: "/aged_receivables.json", // Dropbox path
-    defaultParams: "?date_macro=LastMonth"
+    defaultParams: ""
   }
 };
 
