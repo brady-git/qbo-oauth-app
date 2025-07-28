@@ -1,6 +1,7 @@
 const express = require("express");
 const axios = require("axios");
 const qs = require("qs");
+const { Dropbox } = require("dropbox");
 require("dotenv").config();
 
 const app = express();
@@ -11,15 +12,26 @@ const client_id = process.env.CLIENT_ID;
 const client_secret = process.env.CLIENT_SECRET;
 const redirect_uri = process.env.REDIRECT_URI;
 
+// Dropbox client
+const dbx = new Dropbox({ accessToken: process.env.DROPBOX_ACCESS_TOKEN });
+
 let access_token = null;
 let realm_id = null;
 
-// Home page – start OAuth flow
+// Report registry (only AgedReceivables for now)
+const reports = {
+  AgedReceivables: {
+    file: "/aged_receivables.json", // Dropbox path
+    defaultParams: "?date_macro=LastMonth"
+  }
+};
+
+// Home page
 app.get("/", (req, res) => {
-  res.send(`<a href=\"/connect\">Connect to QuickBooks</a>`);
+  res.send(`<a href="/connect">Connect to QuickBooks</a>`);
 });
 
-// 1. Kick off OAuth
+// Step 1 – OAuth flow
 app.get("/connect", (req, res) => {
   const url =
     "https://appcenter.intuit.com/connect/oauth2?" +
@@ -34,7 +46,7 @@ app.get("/connect", (req, res) => {
   res.redirect(url);
 });
 
-// 2. Handle callback + exchange code for tokens
+// Step 2 – Callback handler
 app.get("/callback", async (req, res) => {
   const auth_code = req.query.code;
   realm_id = req.query.realmId;
@@ -59,20 +71,29 @@ app.get("/callback", async (req, res) => {
 
     access_token = tokenRes.data.access_token;
     console.log("✅ QuickBooks tokens acquired");
-    res.redirect("/report");
+    res.redirect("/report/AgedReceivables");
   } catch (err) {
     console.error("Token Exchange Error:", err.response?.data || err.message);
     res.status(500).send("Error exchanging token");
   }
 });
 
-// 3. Fetch report from QuickBooks
-app.get("/report", async (req, res) => {
-  if (!access_token || !realm_id) return res.status(401).send("Not connected");
+// Step 3 – Report fetcher & Dropbox uploader
+app.get("/report/:reportName", async (req, res) => {
+  const reportName = req.params.reportName;
+
+  if (!access_token || !realm_id) {
+    return res.status(401).send("Not connected to QuickBooks.");
+  }
+
+  const report = reports[reportName];
+  if (!report) {
+    return res.status(400).send(`Report '${reportName}' is not supported.`);
+  }
 
   try {
-    const result = await axios.get(
-      `https://quickbooks.api.intuit.com/v3/company/${realm_id}/reports/AgedReceivables`,
+    const response = await axios.get(
+      `https://quickbooks.api.intuit.com/v3/company/${realm_id}/reports/${reportName}${report.defaultParams}`,
       {
         headers: {
           Authorization: `Bearer ${access_token}`,
@@ -81,11 +102,25 @@ app.get("/report", async (req, res) => {
       }
     );
 
-    const payload = result.data;
-    res.json(payload);
+    const fileContent = JSON.stringify(response.data, null, 2);
+
+    await dbx.filesUpload({
+      path: report.file,
+      contents: fileContent,
+      mode: { ".tag": "overwrite" },
+    });
+
+    console.log(`✅ Uploaded ${reportName} to Dropbox at ${report.file}`);
+    res.json({
+      message: `${reportName} uploaded to Dropbox`,
+      dropboxPath: report.file,
+    });
   } catch (err) {
-    console.error("Report API Error:", err.response?.data || err.message);
-    res.status(500).send("Error fetching report");
+    console.error(
+      `❌ ${reportName} error:`,
+      JSON.stringify(err.response?.data || err.message, null, 2)
+    );
+    res.status(500).send(`Error fetching or uploading ${reportName}`);
   }
 });
 
