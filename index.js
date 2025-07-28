@@ -1,7 +1,6 @@
 const express = require("express");
 const axios = require("axios");
 const qs = require("qs");
-const snowflake = require("snowflake-sdk");
 require("dotenv").config();
 
 const app = express();
@@ -11,26 +10,6 @@ const port = process.env.PORT || 3000;
 const client_id = process.env.CLIENT_ID;
 const client_secret = process.env.CLIENT_SECRET;
 const redirect_uri = process.env.REDIRECT_URI;
-
-// Snowflake connection setup
-const sfConnection = snowflake.createConnection({
-  account:   process.env.SNOWFLAKE_ACCOUNT,
-  username:  process.env.SNOWFLAKE_USERNAME,
-  password:  process.env.SNOWFLAKE_PASSWORD,
-  warehouse: process.env.SNOWFLAKE_WAREHOUSE,
-  database:  process.env.SNOWFLAKE_DATABASE,
-  schema:    process.env.SNOWFLAKE_SCHEMA,
-  role:      process.env.SNOWFLAKE_ROLE // optional
-});
-
-// Connect to Snowflake on startup
-sfConnection.connect((err, conn) => {
-  if (err) {
-    console.error('❌ Snowflake connection failed:', err);
-    process.exit(1);
-  }
-  console.log('✅ Connected to Snowflake as', conn.getUsername());
-});
 
 let access_token = null;
 let realm_id = null;
@@ -87,7 +66,7 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// 3. Fetch report + insert into Snowflake
+// 3. Fetch report from QuickBooks
 app.get("/report", async (req, res) => {
   if (!access_token || !realm_id) return res.status(401).send("Not connected");
 
@@ -103,21 +82,6 @@ app.get("/report", async (req, res) => {
     );
 
     const payload = result.data;
-
-    // Insert raw JSON into Snowflake
-    sfConnection.execute({
-      sqlText: `INSERT INTO aged_receivables(raw) VALUES (PARSE_JSON(?))`,
-      binds: [JSON.stringify(payload)],
-      complete: (err, stmt) => {
-        if (err) {
-          console.error("❌ Snowflake insert error:", err);
-        } else {
-          console.log(`✅ Inserted ${stmt.getNumRowsInserted()} row(s)`);
-        }
-      },
-    });
-
-    // Return the JSON payload
     res.json(payload);
   } catch (err) {
     console.error("Report API Error:", err.response?.data || err.message);
