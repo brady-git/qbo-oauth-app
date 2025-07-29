@@ -48,11 +48,13 @@ async function saveTokens(accessToken, refreshToken, realm) {
   await fs.writeFile(TOKEN_PATH, JSON.stringify(payload), 'utf8');
 }
 
-// Home page\ napp.get("/", (req, res) => {
+// Home page
+app.get("/", (req, res) => {
   res.send(`<a href="/connect">Connect to QuickBooks</a>`);
 });
 
-// Step 1 – OAuth flow\ napp.get("/connect", (req, res) => {
+// Step 1 – OAuth flow
+app.get("/connect", (req, res) => {
   const url =
     "https://appcenter.intuit.com/connect/oauth2?" +
     qs.stringify({
@@ -66,7 +68,8 @@ async function saveTokens(accessToken, refreshToken, realm) {
   res.redirect(url);
 });
 
-// Step 2 – Callback handler\ napp.get("/callback", async (req, res) => {
+// Step 2 – Callback handler
+app.get("/callback", async (req, res) => {
   const auth_code = req.query.code;
   realm_id = req.query.realmId;
 
@@ -104,7 +107,8 @@ async function saveTokens(accessToken, refreshToken, realm) {
   }
 });
 
-// Step 3 – Report fetcher & Dropbox uploader\ napp.get("/report/:reportName", async (req, res) => {
+// Step 3 – Report fetcher & Dropbox uploader
+app.get("/report/:reportName", async (req, res) => {
   const reportName = req.params.reportName;
 
   // 1) Load stored tokens
