@@ -57,7 +57,7 @@ app.get("/connect", (req, res) => {
   const url = "https://appcenter.intuit.com/connect/oauth2?" + qs.stringify({
     client_id,
     response_type: "code",
-    scope: "com.intuit.quickbooks.accounting",
+    scope: "com.intuit.quickbooks.accounting openid",  // include OpenID for OAuth flow as per Intuit docs,
     redirect_uri,
     state: "xyz123",
   });
