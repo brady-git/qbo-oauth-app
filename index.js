@@ -21,7 +21,7 @@ let realm_id = null;
 // Report registry (only AgedReceivables for now)
 const reports = {
   AgedReceivables: {
-    file: "/aged_receivables.json", // Dropbox path
+    file: "/QBO_Reports/aged_receivables/aged_receivables.json", // Dropbox path
     defaultParams: ""
   }
 };
@@ -123,17 +123,6 @@ app.get("/report/:reportName", async (req, res) => {
     res.status(500).send(`Error fetching or uploading ${reportName}`);
   }
 });
-
-app.get("/dropbox/list", async (req, res) => {
-  try {
-    const result = await dbx.filesListFolder({ path: "" }); // list from root
-    res.json(result.result.entries.map(entry => entry.path_display));
-  } catch (err) {
-    console.error("Dropbox listing failed:", err);
-    res.status(500).send("Failed to list Dropbox files.");
-  }
-});
-
 
 // Start server
 app.listen(port, () => {
