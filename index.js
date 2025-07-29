@@ -6,8 +6,7 @@ require("dotenv").config();
 
 const app = express();
 const port = process.env.PORT || 3000;
-// Dropbox paths
-const DBX_TOKEN_PATH = "/QBO_Reports/aged_receivables/tokens.json";
+// Dropbox paths\const DBX_TOKEN_PATH = "/QBO_Reports/aged_receivables/tokens.json";
 
 // OAuth credentials
 const client_id = process.env.CLIENT_ID;
@@ -58,7 +57,7 @@ app.get("/connect", (req, res) => {
   const url = "https://appcenter.intuit.com/connect/oauth2?" + qs.stringify({
     client_id,
     response_type: "code",
-    scope: "com.intuit.quickbooks.accounting offline_access",
+    scope: "com.intuit.quickbooks.accounting",
     redirect_uri,
     state: "xyz123",
   });
