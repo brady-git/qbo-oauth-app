@@ -2,10 +2,13 @@ const express = require("express");
 const axios = require("axios");
 const qs = require("qs");
 const { Dropbox } = require("dropbox");
+const fs = require("fs").promises;
 require("dotenv").config();
 
 const app = express();
 const port = process.env.PORT || 3000;
+// Path to store OAuth tokens
+const TOKEN_PATH = './tokens.json';
 
 // QuickBooks OAuth credentials
 const client_id = process.env.CLIENT_ID;
@@ -21,24 +24,41 @@ let realm_id = null;
 // Report registry (only AgedReceivables for now)
 const reports = {
   AgedReceivables: {
-    file: "/QBO_Reports/aged_receivables/aged_receivables.json", // Dropbox path
+    file: "/QBO_Reports/aged_receivables/aged_receivables.json",
     defaultParams: ""
   }
 };
 
-// Home page
-app.get("/", (req, res) => {
+// Helpers: load and save tokens from disk
+async function loadTokens() {
+  try {
+    const data = await fs.readFile(TOKEN_PATH, 'utf8');
+    return JSON.parse(data);
+  } catch (err) {
+    return {};
+  }
+}
+
+async function saveTokens(accessToken, refreshToken, realm) {
+  const payload = {
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    realm_id: realm
+  };
+  await fs.writeFile(TOKEN_PATH, JSON.stringify(payload), 'utf8');
+}
+
+// Home page\ napp.get("/", (req, res) => {
   res.send(`<a href="/connect">Connect to QuickBooks</a>`);
 });
 
-// Step 1 – OAuth flow
-app.get("/connect", (req, res) => {
+// Step 1 – OAuth flow\ napp.get("/connect", (req, res) => {
   const url =
     "https://appcenter.intuit.com/connect/oauth2?" +
     qs.stringify({
       client_id,
       response_type: "code",
-      scope: "com.intuit.quickbooks.accounting",
+      scope: "com.intuit.quickbooks.accounting openid profile email offline_access",
       redirect_uri,
       state: "xyz123",
     });
@@ -46,8 +66,7 @@ app.get("/connect", (req, res) => {
   res.redirect(url);
 });
 
-// Step 2 – Callback handler
-app.get("/callback", async (req, res) => {
+// Step 2 – Callback handler\ napp.get("/callback", async (req, res) => {
   const auth_code = req.query.code;
   realm_id = req.query.realmId;
 
@@ -70,6 +89,13 @@ app.get("/callback", async (req, res) => {
     );
 
     access_token = tokenRes.data.access_token;
+    // Persist both tokens and realm ID
+    await saveTokens(
+      tokenRes.data.access_token,
+      tokenRes.data.refresh_token,
+      realm_id
+    );
+
     console.log("✅ QuickBooks tokens acquired");
     res.redirect("/report/AgedReceivables");
   } catch (err) {
@@ -78,14 +104,47 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// Step 3 – Report fetcher & Dropbox uploader
-app.get("/report/:reportName", async (req, res) => {
+// Step 3 – Report fetcher & Dropbox uploader\ napp.get("/report/:reportName", async (req, res) => {
   const reportName = req.params.reportName;
 
-  if (!access_token || !realm_id) {
+  // 1) Load stored tokens
+  const tokens = await loadTokens();
+  if (!tokens.refresh_token || !tokens.realm_id) {
     return res.status(401).send("Not connected to QuickBooks.");
   }
+  realm_id = tokens.realm_id;
 
+  // 2) Refresh the access token
+  try {
+    const refreshRes = await axios.post(
+      "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+      qs.stringify({
+        grant_type: "refresh_token",
+        refresh_token: tokens.refresh_token
+      }),
+      {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization:
+            "Basic " +
+            Buffer.from(`${client_id}:${client_secret}`).toString("base64"),
+        },
+      }
+    );
+
+    access_token = refreshRes.data.access_token;
+    // Persist the newly returned refresh token
+    await saveTokens(
+      refreshRes.data.access_token,
+      refreshRes.data.refresh_token,
+      realm_id
+    );
+  } catch (err) {
+    console.error("Token Refresh Error:", err.response?.data || err.message);
+    return res.status(500).send("Error refreshing QuickBooks token");
+  }
+
+  // 3) Continue with report fetch
   const report = reports[reportName];
   if (!report) {
     return res.status(400).send(`Report '${reportName}' is not supported.`);
