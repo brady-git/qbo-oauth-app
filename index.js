@@ -124,6 +124,17 @@ app.get("/report/:reportName", async (req, res) => {
   }
 });
 
+app.get("/dropbox/list", async (req, res) => {
+  try {
+    const result = await dbx.filesListFolder({ path: "" }); // list from root
+    res.json(result.result.entries.map(entry => entry.path_display));
+  } catch (err) {
+    console.error("Dropbox listing failed:", err);
+    res.status(500).send("Failed to list Dropbox files.");
+  }
+});
+
+
 // Start server
 app.listen(port, () => {
   console.log(`App running on port ${port}`);
