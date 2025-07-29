@@ -6,7 +6,9 @@ require("dotenv").config();
 
 const app = express();
 const port = process.env.PORT || 3000;
-// Dropbox paths\const DBX_TOKEN_PATH = "/QBO_Reports/aged_receivables/tokens.json";
+
+// Dropbox token storage path
+const DBX_TOKEN_PATH = "/QBO_Reports/aged_receivables/tokens.json";
 
 // OAuth credentials
 const client_id = process.env.CLIENT_ID;
@@ -57,12 +59,11 @@ app.get("/connect", (req, res) => {
   const url = "https://appcenter.intuit.com/connect/oauth2?" + qs.stringify({
     client_id,
     response_type: "code",
-    scope: "com.intuit.quickbooks.accounting openid",  // include OpenID for OAuth flow as per Intuit docs,
+    scope: "com.intuit.quickbooks.accounting openid",
     redirect_uri,
     state: "xyz123",
   });
-  console.log('🔗 Redirecting user to QuickBooks for consent');
-  console.log('🔗 Using redirect_uri:', redirect_uri);
+  console.log('🔗 Auth URL:', url);
   res.redirect(url);
 });
 
@@ -88,12 +89,7 @@ app.get("/callback", async (req, res) => {
     const tokenRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
       qs.stringify({ grant_type: "authorization_code", code: auth_code, redirect_uri }),
-      {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization: "Basic " + Buffer.from(`${client_id}:${client_secret}`).toString("base64"),
-        }
-      }
+      { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: "Basic " + Buffer.from(`${client_id}:${client_secret}`).toString("base64") } }
     );
 
     console.log('✅ Token response:', JSON.stringify(tokenRes.data, null, 2));
@@ -124,12 +120,7 @@ app.get("/report/:reportName", async (req, res) => {
     const refreshRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
       qs.stringify({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
-      {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization: "Basic " + Buffer.from(`${client_id}:${client_secret}`).toString("base64"),
-        }
-      }
+      { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: "Basic " + Buffer.from(`${client_id}:${client_secret}`).toString("base64") } }
     );
 
     console.log('✅ Refresh token response:', JSON.stringify(refreshRes.data, null, 2));
