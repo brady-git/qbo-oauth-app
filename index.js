@@ -69,9 +69,23 @@ app.get("/connect", (req, res) => {
 
 // Step 2 – Callback handler
 app.get("/callback", async (req, res) => {
-  const auth_code = req.query.code;
-  realm_id = req.query.realmId;
-  console.log('🔄 Received callback, code:', auth_code, 'realm:', realm_id);
+  // Destructure potential OAuth params
+  const { code: auth_code, realmId, error, error_description } = req.query;
+  console.log('🔄 Received callback, query params:', req.query);
+
+  // Handle OAuth errors
+  if (error) {
+    console.error('❌ OAuth error in callback:', error, error_description);
+    return res.status(400).send(`OAuth Error: ${error} - ${error_description}`);
+  }
+
+  // Ensure we have an authorization code
+  if (!auth_code) {
+    console.error('❌ Missing authorization code in callback');
+    return res.status(400).send('Authorization code not returned. Please complete the consent flow.');
+  }
+
+  realm_id = realmId;
   console.log('🔄 Exchanging code for tokens with redirect_uri:', redirect_uri);
 
   try {
@@ -90,10 +104,10 @@ app.get("/callback", async (req, res) => {
     access_token = tokenRes.data.access_token;
     await saveTokens(tokenRes.data.access_token, tokenRes.data.refresh_token, realm_id);
     console.log('✅ Acquired and saved initial tokens');
-    res.redirect("/report/AgedReceivables");
+    res.redirect('/report/AgedReceivables');
   } catch (err) {
     console.error('❌ Token Exchange Error:', JSON.stringify(err.response?.data || err.message, null, 2));
-    res.status(500).send("Error exchanging token. Check render logs for details.");
+    res.status(500).send('Error exchanging token. Check Render logs for details.');
   }
 });
 
@@ -102,7 +116,7 @@ app.get("/report/:reportName", async (req, res) => {
   const reportName = req.params.reportName;
   console.log(`📥 Cron invoked /report/${reportName}`);
 
-  // Load tokens from Dropbox
+  // Load tokens
   const tokens = await loadTokens();
   if (!tokens.refresh_token || !tokens.realm_id) {
     console.error('❌ Missing stored tokens or realm_id');
