@@ -58,7 +58,7 @@ app.get("/connect", (req, res) => {
   const url = "https://appcenter.intuit.com/connect/oauth2?" + qs.stringify({
     client_id,
     response_type: "code",
-    scope: "com.intuit.quickbooks.accounting openid profile email offline_access",
+    scope: "com.intuit.quickbooks.accounting offline_access",
     redirect_uri,
     state: "xyz123",
   });
@@ -69,17 +69,14 @@ app.get("/connect", (req, res) => {
 
 // Step 2 – Callback handler
 app.get("/callback", async (req, res) => {
-  // Destructure potential OAuth params
   const { code: auth_code, realmId, error, error_description } = req.query;
   console.log('🔄 Received callback, query params:', req.query);
 
-  // Handle OAuth errors
   if (error) {
     console.error('❌ OAuth error in callback:', error, error_description);
     return res.status(400).send(`OAuth Error: ${error} - ${error_description}`);
   }
 
-  // Ensure we have an authorization code
   if (!auth_code) {
     console.error('❌ Missing authorization code in callback');
     return res.status(400).send('Authorization code not returned. Please complete the consent flow.');
@@ -116,7 +113,6 @@ app.get("/report/:reportName", async (req, res) => {
   const reportName = req.params.reportName;
   console.log(`📥 Cron invoked /report/${reportName}`);
 
-  // Load tokens
   const tokens = await loadTokens();
   if (!tokens.refresh_token || !tokens.realm_id) {
     console.error('❌ Missing stored tokens or realm_id');
@@ -124,7 +120,6 @@ app.get("/report/:reportName", async (req, res) => {
   }
   realm_id = tokens.realm_id;
 
-  // Refresh access token
   try {
     console.log('🔄 Refreshing QuickBooks access token');
     const refreshRes = await axios.post(
@@ -147,14 +142,12 @@ app.get("/report/:reportName", async (req, res) => {
     return res.status(500).send("Error refreshing QuickBooks token");
   }
 
-  // Validate report
   const report = reports[reportName];
   if (!report) {
     console.error(`❌ Unsupported report: ${reportName}`);
     return res.status(400).send(`Report '${reportName}' is not supported.`);
   }
 
-  // Fetch and upload
   try {
     console.log(`📊 Fetching report ${reportName}`);
     const response = await axios.get(
