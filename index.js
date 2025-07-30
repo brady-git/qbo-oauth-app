@@ -36,7 +36,7 @@ const sfConn = snowflake.createConnection({
   warehouse: process.env.SF_WAREHOUSE,
   database:  process.env.SF_DATABASE,
   schema:    process.env.SF_SCHEMA,
-  role:      process.env.SF_ROLE, // optional
+  role:      process.env.SF_ROLE // optional
 });
 
 sfConn.connect((err) => {
@@ -44,32 +44,28 @@ sfConn.connect((err) => {
     logSfError(err, "connection");
     process.exit(1);
   }
-  console.log("✅ Connected to Snowflake");
+  console.log("✅ Snowflake connection established");
 });
 
-// Report definitions
-const reports = {
-  AgedReceivables: { defaultParams: "" }
-};
+// Supported reports
+const reports = { AgedReceivables: "" };
 
-// Helper: load tokens from local file
+// Load tokens from file
 async function loadTokens() {
   try {
     const data = await fs.readFile(TOKEN_PATH, "utf8");
     return JSON.parse(data);
-  } catch (err) {
-    console.warn("⚠️ No token file found:", err.message);
+  } catch {
     return {};
   }
 }
 
-// Helper: save tokens to local file
+// Save tokens to file
 async function saveTokens(tokens) {
   try {
     await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), "utf8");
-    console.log("✅ Tokens saved");
   } catch (err) {
-    console.error("❌ Failed to save tokens:", err.message);
+    console.error("❌ Error saving tokens: ", err.message);
   }
 }
 
@@ -78,151 +74,93 @@ app.get("/", (req, res) => {
   res.send('<a href="/connect">Connect to QuickBooks</a>');
 });
 
-// Step 1: Redirect to QuickBooks for OAuth
+// Redirect to QuickBooks OAuth
 app.get("/connect", (req, res) => {
-  const authUrl =
+  const url =
     "https://appcenter.intuit.com/connect/oauth2?" +
     qs.stringify({
       client_id,
       response_type: "code",
       scope: "com.intuit.quickbooks.accounting openid",
       redirect_uri,
-      state: "xyz123",
+      state: "xyz123"
     });
-  console.log("🔗 Redirecting to:", authUrl);
-  res.redirect(authUrl);
+  res.redirect(url);
 });
 
-// Step 2: OAuth callback
+// OAuth callback handler
 app.get("/callback", async (req, res) => {
-  const { code: authCode, realmId, error, error_description } = req.query;
-  if (error) {
-    console.error("❌ OAuth error:", error, error_description);
-    return res.status(400).send(`OAuth Error: ${error}`);
+  const { code: authCode, realmId, error } = req.query;
+  if (error || !authCode) {
+    return res.status(400).send("Authentication failed.");
   }
-  if (!authCode) {
-    console.error("❌ Missing auth code in callback");
-    return res.status(400).send("Authorization code not returned.");
-  }
-
   try {
     const tokenRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-      qs.stringify({
-        grant_type: "authorization_code",
-        code: authCode,
-        redirect_uri,
-      }),
-      {
-        headers: {
+      qs.stringify({ grant_type: "authorization_code", code: authCode, redirect_uri }),
+      { headers: { 
           "Content-Type": "application/x-www-form-urlencoded",
-          Authorization:
-            "Basic " +
-            Buffer.from(`${client_id}:${client_secret}`).toString("base64"),
-        },
+          Authorization: `Basic ${Buffer.from(`${client_id}:${client_secret}`).toString("base64")}`
+        }
       }
     );
-
-    // Save tokens locally
     const tokens = {
       access_token: tokenRes.data.access_token,
       refresh_token: tokenRes.data.refresh_token,
-      realm_id: realmId,
+      realm_id: realmId
     };
     await saveTokens(tokens);
-    console.log("✅ OAuth tokens acquired");
-
-    // Show user a success page instead of auto-refresh
-    return res.send(`
-      <html>
-        <body style="font-family:Arial,sans-serif; text-align:center; margin-top:50px;">
-          <h1>Authentication Successful</h1>
-          <p>Your QuickBooks connection is set up.</p>
-          <p>The scheduled job will now fetch reports automatically.</p>
-          <p><a href="/">Go Home</a></p>
-        </body>
-      </html>
-    `);
-  } catch (err) {
-    console.error("❌ Token exchange error:", err.response?.data || err.message);
-    return res.status(500).send("Token exchange failed");
+    res.send("<h1>Authentication successful.</h1>");
+  } catch {
+    res.status(500).send("Token exchange failed.");
   }
 });
 
-// Step 3: Fetch report and load to Snowflake
-app.get("/report/:reportName", async (req, res) => {
-  const reportName = req.params.reportName;
-  console.log(`📥 /report/${reportName} invoked`);
-
-  const report = reports[reportName];
-  if (!report) {
-    console.error("❌ Unsupported report:", reportName);
-    return res.status(400).send(`Report ${reportName} not supported.`);
-  }
+// Fetch report and load into Snowflake
+app.get("/report/:name", async (req, res) => {
+  const name = req.params.name;
+  const defaultParams = reports[name];
+  if (defaultParams === undefined) return res.status(400).send("Unsupported report.");
 
   const tokens = await loadTokens();
-  if (!tokens.refresh_token || !tokens.realm_id) {
-    console.error("❌ Missing tokens or realm_id");
-    return res.status(401).send("Not connected to QuickBooks.");
-  }
+  if (!tokens.refresh_token || !tokens.realm_id) return res.status(401).send("Not connected.");
 
-  let accessToken;
   try {
     const refreshRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-      qs.stringify({
-        grant_type: "refresh_token",
-        refresh_token: tokens.refresh_token,
-      }),
-      {
-        headers: {
+      qs.stringify({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
+      { headers: { 
           "Content-Type": "application/x-www-form-urlencoded",
-          Authorization:
-            "Basic " +
-            Buffer.from(`${client_id}:${client_secret}`).toString("base64"),
-        },
+          Authorization: `Basic ${Buffer.from(`${client_id}:${client_secret}`).toString("base64")}`
+        }
       }
     );
-    accessToken = refreshRes.data.access_token;
-    tokens.access_token = accessToken;
+    tokens.access_token = refreshRes.data.access_token;
     tokens.refresh_token = refreshRes.data.refresh_token;
     await saveTokens(tokens);
-    console.log("✅ Token refreshed");
   } catch (err) {
-    console.error("❌ Token refresh error:", err.response?.data || err.message);
-    return res.status(500).send("Token refresh failed");
+    return res.status(500).send("Token refresh failed.");
   }
 
+  const apiUrl = `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${name}${defaultParams}`;
+  let data;
   try {
-    const url = `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${reportName}${report.defaultParams}`;
-    console.log("🔄 Fetching", url);
-    const response = await axios.get(url, {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: "application/json",
-      },
-    });
-
-    const payload = response.data;
-    sfConn.execute({
-      sqlText: `INSERT INTO AGED_RECEIVABLES (RAW) VALUES (PARSE_JSON(?))`,
-      binds: [JSON.stringify(payload)],
-      complete: (err) => {
-        if (err) {
-          logSfError(err, "load");
-          return res.status(500).send("Load to Snowflake failed");
-        }
-        console.log("✅ Loaded report to Snowflake");
-        res.send("Report loaded successfully");
-      },
-    });
-  } catch (err) {
-    console.error("❌ Error fetching report:", err.response?.data || err.message);
-    return res.status(500).send("Report fetch failed");
+    data = (await axios.get(apiUrl, { headers: { Authorization: `Bearer ${tokens.access_token}` }})).data;
+  } catch {
+    return res.status(500).send("Report fetch failed.");
   }
+
+  sfConn.execute({
+    sqlText: `INSERT INTO AGED_RECEIVABLES (RAW) VALUES (PARSE_JSON(?))`,
+    binds: [JSON.stringify(data)],
+    complete: (err) => {
+      if (err) {
+        logSfError(err, "insert");
+        return res.status(500).send("Snowflake load failed.");
+      }
+      res.send("Data loaded.");
+    }
+  });
 });
 
-// Start server
-app.listen(port, () => {
-  console.log(`App listening on port ${port}`);
-});
+app.listen(port, () => console.log(`Listening on port ${port}`));
