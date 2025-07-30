@@ -109,6 +109,7 @@ app.get("/callback", async (req, res) => {
       }
     );
 
+    // Save tokens locally
     const tokens = {
       access_token: tokenRes.data.access_token,
       refresh_token: tokenRes.data.refresh_token,
@@ -116,10 +117,21 @@ app.get("/callback", async (req, res) => {
     };
     await saveTokens(tokens);
     console.log("✅ OAuth tokens acquired");
-    res.redirect("/report/AgedReceivables");
+
+    // Show user a success page instead of auto-refresh
+    return res.send(`
+      <html>
+        <body style="font-family:Arial,sans-serif; text-align:center; margin-top:50px;">
+          <h1>Authentication Successful</h1>
+          <p>Your QuickBooks connection is set up.</p>
+          <p>The scheduled job will now fetch reports automatically.</p>
+          <p><a href="/">Go Home</a></p>
+        </body>
+      </html>
+    `);
   } catch (err) {
     console.error("❌ Token exchange error:", err.response?.data || err);
-    res.status(500).send("Token exchange failed");
+    return res.status(500).send("Token exchange failed");
   }
 });
 
@@ -192,10 +204,11 @@ app.get("/report/:reportName", async (req, res) => {
     });
   } catch (err) {
     console.error("❌ Error fetching report:", err.response?.data || err);
-    res.status(500).send("Report fetch failed");
+    return res.status(500).send("Report fetch failed");
   }
 });
 
+// Start server
 app.listen(port, () => {
   console.log(`App listening on port ${port}`);
 });
