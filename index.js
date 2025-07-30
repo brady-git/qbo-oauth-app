@@ -28,27 +28,35 @@ function logSfError(err, context = "connection") {
   );
 }
 
-// Log Snowflake configuration for debugging
+// Pre-flight check for required environment variables
+["SF_ACCOUNT","SF_USER","SF_PWD","SF_WAREHOUSE","SF_DATABASE","SF_SCHEMA","SF_REGION"].forEach(varName => {
+  if (!process.env[varName]) {
+    console.error(`❌ Missing required env var: ${varName}`);
+    process.exit(1);
+  }
+});
+
+// Log Snowflake configuration for debugging (locator-only account, region separate)
 console.log('Snowflake config:', {
   account: process.env.SF_ACCOUNT,
+  region: process.env.SF_REGION,
   user: process.env.SF_USER,
   warehouse: process.env.SF_WAREHOUSE,
   database: process.env.SF_DATABASE,
   schema: process.env.SF_SCHEMA,
-  role: process.env.SF_ROLE || '(default)',
-  region: process.env.SF_REGION || '(default)'
+  role: process.env.SF_ROLE || '(default)'
 });
 
-// Snowflake connection (explicitly include region)
+// Snowflake connection
 const sfConn = snowflake.createConnection({
   account:   process.env.SF_ACCOUNT,
+  region:    process.env.SF_REGION,
   username:  process.env.SF_USER,
   password:  process.env.SF_PWD,
   warehouse: process.env.SF_WAREHOUSE,
   database:  process.env.SF_DATABASE,
   schema:    process.env.SF_SCHEMA,
-  role:      process.env.SF_ROLE,
-  region:    process.env.SF_REGION
+  role:      process.env.SF_ROLE
 });
 
 sfConn.connect((err) => {
@@ -57,29 +65,11 @@ sfConn.connect((err) => {
     process.exit(1);
   }
   console.log("✅ Snowflake connection established");
-
-  // Verify the session and log current context
-  sfConn.execute({
-    sqlText: `SELECT
-      CURRENT_ACCOUNT() AS account,
-      CURRENT_REGION() AS region,
-      CURRENT_WAREHOUSE() AS warehouse,
-      CURRENT_DATABASE() AS database,
-      CURRENT_SCHEMA() AS schema`,
-    complete: (err, stmt, rows) => {
-      if (err) {
-        console.error('❌ Failed to verify session:', err.message || err);
-      } else {
-        console.log('🔍 Session context:', rows[0]);
-      }
-    }
-  });
 });
 
 // Supported reports
 const reports = { AgedReceivables: "" };
 
-// Load tokens from file
 async function loadTokens() {
   try {
     const data = await fs.readFile(TOKEN_PATH, "utf8");
@@ -89,7 +79,6 @@ async function loadTokens() {
   }
 }
 
-// Save tokens to file
 async function saveTokens(tokens) {
   try {
     await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), "utf8");
@@ -98,12 +87,10 @@ async function saveTokens(tokens) {
   }
 }
 
-// Home route
 app.get("/", (req, res) => {
   res.send('<a href="/connect">Connect to QuickBooks</a>');
 });
 
-// Redirect to QuickBooks OAuth
 app.get("/connect", (req, res) => {
   const url =
     "https://appcenter.intuit.com/connect/oauth2?" +
@@ -117,7 +104,6 @@ app.get("/connect", (req, res) => {
   res.redirect(url);
 });
 
-// OAuth callback handler
 app.get("/callback", async (req, res) => {
   const { code: authCode, realmId, error } = req.query;
   if (error || !authCode) {
@@ -145,7 +131,6 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// Fetch report and load into Snowflake
 app.get("/report/:name", async (req, res) => {
   const name = req.params.name;
   const defaultParams = reports[name];
@@ -188,24 +173,6 @@ app.get("/report/:name", async (req, res) => {
         return res.status(500).send("Snowflake load failed.");
       }
       res.send("Data loaded.");
-    }
-  });
-});
-
-// Debug endpoint to report active Snowflake session context
-app.get('/sf-session', (req, res) => {
-  sfConn.execute({
-    sqlText: `SELECT
-      CURRENT_ACCOUNT() AS account,
-      CURRENT_REGION()  AS region,
-      CURRENT_WAREHOUSE() AS warehouse,
-      CURRENT_DATABASE()  AS database,
-      CURRENT_SCHEMA()    AS schema`,
-    complete: (err, stmt, rows) => {
-      if (err) {
-        return res.status(500).json({ error: err.message || err });
-      }
-      res.json(rows[0]);
     }
   });
 });
