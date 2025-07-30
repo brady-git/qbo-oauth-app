@@ -14,6 +14,20 @@ const client_id = process.env.CLIENT_ID;
 const client_secret = process.env.CLIENT_SECRET;
 const redirect_uri = process.env.REDIRECT_URI;
 
+// Helper for standardized Snowflake error logging
+function logSfError(err, context = "connection") {
+  const resp = err.response || {};
+  console.error(
+    `❌ Snowflake ${context} error:`,
+    {
+      code: err.code,
+      status: resp.status,
+      statusText: resp.statusText,
+      url: resp.config?.url
+    }
+  );
+}
+
 // Snowflake connection
 const sfConn = snowflake.createConnection({
   account:   process.env.SF_ACCOUNT,
@@ -27,7 +41,7 @@ const sfConn = snowflake.createConnection({
 
 sfConn.connect((err) => {
   if (err) {
-    console.error("❌ Snowflake connection failed:", err);
+    logSfError(err, "connection");
     process.exit(1);
   }
   console.log("✅ Connected to Snowflake");
@@ -55,7 +69,7 @@ async function saveTokens(tokens) {
     await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), "utf8");
     console.log("✅ Tokens saved");
   } catch (err) {
-    console.error("❌ Failed to save tokens:", err);
+    console.error("❌ Failed to save tokens:", err.message);
   }
 }
 
@@ -130,7 +144,7 @@ app.get("/callback", async (req, res) => {
       </html>
     `);
   } catch (err) {
-    console.error("❌ Token exchange error:", err.response?.data || err);
+    console.error("❌ Token exchange error:", err.response?.data || err.message);
     return res.status(500).send("Token exchange failed");
   }
 });
@@ -175,7 +189,7 @@ app.get("/report/:reportName", async (req, res) => {
     await saveTokens(tokens);
     console.log("✅ Token refreshed");
   } catch (err) {
-    console.error("❌ Token refresh error:", err.response?.data || err);
+    console.error("❌ Token refresh error:", err.response?.data || err.message);
     return res.status(500).send("Token refresh failed");
   }
 
@@ -195,7 +209,7 @@ app.get("/report/:reportName", async (req, res) => {
       binds: [JSON.stringify(payload)],
       complete: (err) => {
         if (err) {
-          console.error("❌ Snowflake load error:", err);
+          logSfError(err, "load");
           return res.status(500).send("Load to Snowflake failed");
         }
         console.log("✅ Loaded report to Snowflake");
@@ -203,7 +217,7 @@ app.get("/report/:reportName", async (req, res) => {
       },
     });
   } catch (err) {
-    console.error("❌ Error fetching report:", err.response?.data || err);
+    console.error("❌ Error fetching report:", err.response?.data || err.message);
     return res.status(500).send("Report fetch failed");
   }
 });
