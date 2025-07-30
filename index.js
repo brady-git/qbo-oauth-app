@@ -28,15 +28,14 @@ function logSfError(err, context = "connection") {
   );
 }
 
-// Snowflake connection
+// Snowflake connection (no explicit role specified; uses default role)
 const sfConn = snowflake.createConnection({
   account:   process.env.SF_ACCOUNT,
   username:  process.env.SF_USER,
   password:  process.env.SF_PWD,
   warehouse: process.env.SF_WAREHOUSE,
   database:  process.env.SF_DATABASE,
-  schema:    process.env.SF_SCHEMA,
-  role:      process.env.SF_ROLE // optional
+  schema:    process.env.SF_SCHEMA
 });
 
 sfConn.connect((err) => {
