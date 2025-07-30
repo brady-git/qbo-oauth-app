@@ -1,162 +1,199 @@
 const express = require("express");
 const axios = require("axios");
 const qs = require("qs");
-const { Dropbox } = require("dropbox");
+const fs = require("fs").promises;
+const snowflake = require("snowflake-sdk");
 require("dotenv").config();
 
 const app = express();
 const port = process.env.PORT || 3000;
-
-// Dropbox token storage path
-const DBX_TOKEN_PATH = "/QBO_Reports/aged_receivables/tokens.json";
+const TOKEN_PATH = "./tokens.json";
 
 // OAuth credentials
 const client_id = process.env.CLIENT_ID;
 const client_secret = process.env.CLIENT_SECRET;
 const redirect_uri = process.env.REDIRECT_URI;
 
-// Initialize Dropbox client
-const dbx = new Dropbox({ accessToken: process.env.DROPBOX_ACCESS_TOKEN });
+// Snowflake connection
+const sfConn = snowflake.createConnection({
+  account:   process.env.SF_ACCOUNT,
+  username:  process.env.SF_USER,
+  password:  process.env.SF_PWD,
+  warehouse: process.env.SF_WAREHOUSE,
+  database:  process.env.SF_DATABASE,
+  schema:    process.env.SF_SCHEMA,
+  role:      process.env.SF_ROLE, // optionals
+});
 
-let access_token = null;
-let realm_id = null;
-
-const reports = {
-  AgedReceivables: {
-    file: "/QBO_Reports/aged_receivables/aged_receivables.json",
-    defaultParams: ""
+sfConn.connect((err) => {
+  if (err) {
+    console.error("❌ Snowflake connection failed:", err);
+    process.exit(1);
   }
+  console.log("✅ Connected to Snowflake");
+});
+
+// Report definitions
+const reports = {
+  AgedReceivables: { defaultParams: "" }
 };
 
-// Load tokens.json from Dropbox
+// Helper: load tokens from local file
 async function loadTokens() {
   try {
-    const downloadRes = await dbx.filesDownload({ path: DBX_TOKEN_PATH });
-    const dataStr = downloadRes.result.fileBinary.toString("utf8");
-    console.log('✅ Loaded tokens from Dropbox');
-    return JSON.parse(dataStr);
+    const data = await fs.readFile(TOKEN_PATH, "utf8");
+    return JSON.parse(data);
   } catch (err) {
-    console.warn('⚠️ No token file in Dropbox or failed to download:', err.error || err);
+    console.warn("⚠️ No token file found:", err.message);
     return {};
   }
 }
 
-// Save tokens.json to Dropbox
-async function saveTokens(accessToken, refreshToken, realm) {
-  const payload = { access_token: accessToken, refresh_token: refreshToken, realm_id: realm };
-  await dbx.filesUpload({
-    path: DBX_TOKEN_PATH,
-    contents: JSON.stringify(payload),
-    mode: { ".tag": "overwrite" }
-  });
-  console.log('✅ Saved tokens to Dropbox');
+// Helper: save tokens to local file
+async function saveTokens(tokens) {
+  try {
+    await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), "utf8");
+    console.log("✅ Tokens saved");
+  } catch (err) {
+    console.error("❌ Failed to save tokens:", err);
+  }
 }
 
-app.get("/", (req, res) => res.send('<a href="/connect">Connect to QuickBooks</a>'));
-
-// Step 1 – OAuth flow
-app.get("/connect", (req, res) => {
-  const url = "https://appcenter.intuit.com/connect/oauth2?" + qs.stringify({
-    client_id,
-    response_type: "code",
-    scope: "com.intuit.quickbooks.accounting openid",
-    redirect_uri,
-    state: "xyz123",
-  });
-  console.log('🔗 Auth URL:', url);
-  res.redirect(url);
+app.get("/", (req, res) => {
+  res.send('<a href="/connect">Connect to QuickBooks</a>');
 });
 
-// Step 2 – Callback handler
+// Step 1: Redirect to QuickBooks for OAuth\ napp.get("/connect", (req, res) => {
+  const authUrl = 
+    "https://appcenter.intuit.com/connect/oauth2?" +
+    qs.stringify({
+      client_id,
+      response_type: "code",
+      scope: "com.intuit.quickbooks.accounting openid",
+      redirect_uri,
+      state: "xyz123",
+    });
+  console.log("🔗 Redirecting to:", authUrl);
+  res.redirect(authUrl);
+});
+
+// Step 2: OAuth callback
 app.get("/callback", async (req, res) => {
-  const { code: auth_code, realmId, error, error_description } = req.query;
-  console.log('🔄 Received callback, query params:', req.query);
-
+  const { code: authCode, realmId, error, error_description } = req.query;
   if (error) {
-    console.error('❌ OAuth error in callback:', error, error_description);
-    return res.status(400).send(`OAuth Error: ${error} - ${error_description}`);
+    console.error("❌ OAuth error:", error, error_description);
+    return res.status(400).send(`OAuth Error: ${error}`);
   }
-
-  if (!auth_code) {
-    console.error('❌ Missing authorization code in callback');
-    return res.status(400).send('Authorization code not returned. Please complete the consent flow.');
+  if (!authCode) {
+    console.error("❌ Missing auth code in callback");
+    return res.status(400).send("Authorization code not returned.");
   }
-
-  realm_id = realmId;
-  console.log('🔄 Exchanging code for tokens with redirect_uri:', redirect_uri);
 
   try {
     const tokenRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-      qs.stringify({ grant_type: "authorization_code", code: auth_code, redirect_uri }),
-      { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: "Basic " + Buffer.from(`${client_id}:${client_secret}`).toString("base64") } }
+      qs.stringify({
+        grant_type: "authorization_code",
+        code: authCode,
+        redirect_uri,
+      }),
+      {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization:
+            "Basic " +
+            Buffer.from(`${client_id}:${client_secret}`).toString("base64"),
+        },
+      }
     );
 
-    console.log('✅ Token response:', JSON.stringify(tokenRes.data, null, 2));
-    access_token = tokenRes.data.access_token;
-    await saveTokens(tokenRes.data.access_token, tokenRes.data.refresh_token, realm_id);
-    console.log('✅ Acquired and saved initial tokens');
-    res.redirect('/report/AgedReceivables');
+    const tokens = {
+      access_token: tokenRes.data.access_token,
+      refresh_token: tokenRes.data.refresh_token,
+      realm_id: realmId,
+    };
+    await saveTokens(tokens);
+    console.log("✅ OAuth tokens acquired");
+    res.redirect("/report/AgedReceivables");
   } catch (err) {
-    console.error('❌ Token Exchange Error:', JSON.stringify(err.response?.data || err.message, null, 2));
-    res.status(500).send('Error exchanging token. Check Render logs for details.');
+    console.error("❌ Token exchange error:", err.response?.data || err);
+    res.status(500).send("Token exchange failed");
   }
 });
 
-// Step 3 – Report fetcher & Dropbox uploader
+// Step 3: Fetch report and load to Snowflake
 app.get("/report/:reportName", async (req, res) => {
   const reportName = req.params.reportName;
-  console.log(`📥 Cron invoked /report/${reportName}`);
-
-  const tokens = await loadTokens();
-  if (!tokens.refresh_token || !tokens.realm_id) {
-    console.error('❌ Missing stored tokens or realm_id');
-    return res.status(401).send("Not connected to QuickBooks.");
-  }
-  realm_id = tokens.realm_id;
-
-  try {
-    console.log('🔄 Refreshing QuickBooks access token');
-    const refreshRes = await axios.post(
-      "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-      qs.stringify({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
-      { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: "Basic " + Buffer.from(`${client_id}:${client_secret}`).toString("base64") } }
-    );
-
-    console.log('✅ Refresh token response:', JSON.stringify(refreshRes.data, null, 2));
-    access_token = refreshRes.data.access_token;
-    await saveTokens(refreshRes.data.access_token, refreshRes.data.refresh_token, realm_id);
-    console.log('✅ Token refreshed');
-  } catch (err) {
-    console.error('❌ Token Refresh Error:', JSON.stringify(err.response?.data || err.message, null, 2));
-    return res.status(500).send("Error refreshing QuickBooks token");
-  }
+  console.log(`📥 /report/${reportName} invoked`);
 
   const report = reports[reportName];
   if (!report) {
-    console.error(`❌ Unsupported report: ${reportName}`);
-    return res.status(400).send(`Report '${reportName}' is not supported.`);
+    console.error("❌ Unsupported report:", reportName);
+    return res.status(400).send(`Report ${reportName} not supported.`);
+  }
+
+  const tokens = await loadTokens();
+  if (!tokens.refresh_token || !tokens.realm_id) {
+    console.error("❌ Missing tokens or realm_id");
+    return res.status(401).send("Not connected to QuickBooks.");
+  }
+
+  let accessToken;
+  try {
+    const refreshRes = await axios.post(
+      "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+      qs.stringify({
+        grant_type: "refresh_token",
+        refresh_token: tokens.refresh_token,
+      }),
+      {
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization:
+            "Basic " +
+            Buffer.from(`${client_id}:${client_secret}`).toString("base64"),
+        },
+      }
+    );
+    accessToken = refreshRes.data.access_token;
+    tokens.access_token = accessToken;
+    tokens.refresh_token = refreshRes.data.refresh_token;
+    await saveTokens(tokens);
+    console.log("✅ Token refreshed");
+  } catch (err) {
+    console.error("❌ Token refresh error:", err.response?.data || err);
+    return res.status(500).send("Token refresh failed");
   }
 
   try {
-    console.log(`📊 Fetching report ${reportName}`);
-    const response = await axios.get(
-      `https://quickbooks.api.intuit.com/v3/company/${realm_id}/reports/${reportName}${report.defaultParams}`,
-      { headers: { Authorization: `Bearer ${access_token}`, Accept: "application/json" } }
-    );
+    const url = `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${reportName}${report.defaultParams}`;
+    console.log("🔄 Fetching", url);
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+    });
 
-    console.log('✅ Report fetched, length:', JSON.stringify(response.data).length);
-    const fileContent = JSON.stringify(response.data, null, 2);
-
-    console.log('💾 Uploading to Dropbox at', report.file);
-    const uploadRes = await dbx.filesUpload({ path: report.file, contents: fileContent, mode: { ".tag": "overwrite" } });
-    console.log('✅ Dropbox upload response', uploadRes.result?.id);
-
-    res.json({ message: `${reportName} uploaded`, dropboxPath: report.file });
+    const payload = response.data;
+    sfConn.execute({
+      sqlText: `INSERT INTO AGED_RECEIVABLES (RAW) VALUES (PARSE_JSON(?))`,
+      binds: [JSON.stringify(payload)],
+      complete: (err) => {
+        if (err) {
+          console.error("❌ Snowflake load error:", err);
+          return res.status(500).send("Load to Snowflake failed");
+        }
+        console.log("✅ Loaded report to Snowflake");
+        res.send("Report loaded successfully");
+      },
+    });
   } catch (err) {
-    console.error('❌ Error in report flow:', JSON.stringify(err.response?.data || err.message, null, 2));
-    res.status(500).send(`Error fetching or uploading ${reportName}`);
+    console.error("❌ Error fetching report:", err.response?.data || err);
+    res.status(500).send("Report fetch failed");
   }
 });
 
-app.listen(port, () => console.log(`App running on port ${port}`));
+app.listen(port, () => {
+  console.log(`App listening on port ${port}`);
+});
