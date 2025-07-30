@@ -192,4 +192,22 @@ app.get("/report/:name", async (req, res) => {
   });
 });
 
+// Debug endpoint to report active Snowflake session context
+app.get('/sf-session', (req, res) => {
+  sfConn.execute({
+    sqlText: `SELECT
+      CURRENT_ACCOUNT() AS account,
+      CURRENT_REGION()  AS region,
+      CURRENT_WAREHOUSE() AS warehouse,
+      CURRENT_DATABASE()  AS database,
+      CURRENT_SCHEMA()    AS schema`,
+    complete: (err, stmt, rows) => {
+      if (err) {
+        return res.status(500).json({ error: err.message || err });
+      }
+      res.json(rows[0]);
+    }
+  });
+});
+
 app.listen(port, () => console.log(`Listening on port ${port}`));
