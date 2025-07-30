@@ -22,7 +22,7 @@ const sfConn = snowflake.createConnection({
   warehouse: process.env.SF_WAREHOUSE,
   database:  process.env.SF_DATABASE,
   schema:    process.env.SF_SCHEMA,
-  role:      process.env.SF_ROLE, // optionals
+  role:      process.env.SF_ROLE, // optional
 });
 
 sfConn.connect((err) => {
@@ -59,12 +59,14 @@ async function saveTokens(tokens) {
   }
 }
 
+// Home route
 app.get("/", (req, res) => {
   res.send('<a href="/connect">Connect to QuickBooks</a>');
 });
 
-// Step 1: Redirect to QuickBooks for OAuth\ napp.get("/connect", (req, res) => {
-  const authUrl = 
+// Step 1: Redirect to QuickBooks for OAuth
+app.get("/connect", (req, res) => {
+  const authUrl =
     "https://appcenter.intuit.com/connect/oauth2?" +
     qs.stringify({
       client_id,
