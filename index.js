@@ -28,6 +28,16 @@ function logSfError(err, context = "connection") {
   );
 }
 
+// Log Snowflake configuration for debugging
+console.log('Snowflake config:', {
+  account: process.env.SF_ACCOUNT,
+  user: process.env.SF_USER,
+  warehouse: process.env.SF_WAREHOUSE,
+  database: process.env.SF_DATABASE,
+  schema: process.env.SF_SCHEMA,
+  role: process.env.SF_ROLE || '(default)'
+});
+
 // Snowflake connection (no explicit role specified; uses default role)
 const sfConn = snowflake.createConnection({
   account:   process.env.SF_ACCOUNT,
