@@ -35,10 +35,11 @@ console.log('Snowflake config:', {
   warehouse: process.env.SF_WAREHOUSE,
   database: process.env.SF_DATABASE,
   schema: process.env.SF_SCHEMA,
-  role: process.env.SF_ROLE || '(default)'
+  role: process.env.SF_ROLE || '(default)',
+  region: process.env.SF_REGION || '(default)'
 });
 
-// Snowflake connection (no explicit role specified; uses default role)
+// Snowflake connection (explicitly include region)
 const sfConn = snowflake.createConnection({
   account:   process.env.SF_ACCOUNT,
   username:  process.env.SF_USER,
@@ -46,7 +47,8 @@ const sfConn = snowflake.createConnection({
   warehouse: process.env.SF_WAREHOUSE,
   database:  process.env.SF_DATABASE,
   schema:    process.env.SF_SCHEMA,
-  role:      process.env.SF_ROLE  // explicitly include roleName
+  role:      process.env.SF_ROLE,
+  region:    process.env.SF_REGION
 });
 
 sfConn.connect((err) => {
@@ -55,6 +57,23 @@ sfConn.connect((err) => {
     process.exit(1);
   }
   console.log("✅ Snowflake connection established");
+
+  // Verify the session and log current context
+  sfConn.execute({
+    sqlText: `SELECT
+      CURRENT_ACCOUNT() AS account,
+      CURRENT_REGION() AS region,
+      CURRENT_WAREHOUSE() AS warehouse,
+      CURRENT_DATABASE() AS database,
+      CURRENT_SCHEMA() AS schema`,
+    complete: (err, stmt, rows) => {
+      if (err) {
+        console.error('❌ Failed to verify session:', err.message || err);
+      } else {
+        console.log('🔍 Session context:', rows[0]);
+      }
+    }
+  });
 });
 
 // Supported reports
@@ -148,7 +167,7 @@ app.get("/report/:name", async (req, res) => {
     tokens.access_token = refreshRes.data.access_token;
     tokens.refresh_token = refreshRes.data.refresh_token;
     await saveTokens(tokens);
-  } catch (err) {
+  } catch {
     return res.status(500).send("Token refresh failed.");
   }
 
