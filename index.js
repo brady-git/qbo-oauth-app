@@ -1,49 +1,84 @@
-// index.js
 const express = require("express");
-const axios   = require("axios");
-const qs      = require("qs");
-const fs      = require("fs").promises;
-const util    = require("util");
+const axios = require("axios");
+const qs = require("qs");
+const fs = require("fs").promises;
 const snowflake = require("snowflake-sdk");
 require("dotenv").config();
 
-const app  = express();
+const app = express();
 const port = process.env.PORT || 3000;
 const TOKEN_PATH = process.env.TOKEN_PATH || "/data/tokens.json";
 
 // OAuth credentials
-const { CLIENT_ID: client_id,
-        CLIENT_SECRET: client_secret,
-        REDIRECT_URI: redirect_uri } = process.env;
+const client_id = process.env.CLIENT_ID;
+const client_secret = process.env.CLIENT_SECRET;
+const redirect_uri = process.env.REDIRECT_URI;
 
 // Helper for standardized Snowflake error logging
 function logSfError(err, context = "connection") {
   const resp = err.response || {};
   console.error(
     `❌ Snowflake ${context} error:`,
-    { code: err.code, status: resp.status, statusText: resp.statusText, url: resp.config?.url }
+    {
+      code: err.code,
+      status: resp.status,
+      statusText: resp.statusText,
+      url: err.config?.url
+    }
   );
 }
 
-// Preflight check
-["SF_ACCOUNT","SF_USER","SF_PWD","SF_WAREHOUSE","SF_DATABASE","SF_SCHEMA","SF_REGION"]
-  .forEach(varName => {
-    if (!process.env[varName]) {
-      console.error(`❌ Missing required env var: ${varName}`);
-      process.exit(1);
-    }
-  });
+// Pre-flight check for required environment variables
+["SF_ACCOUNT","SF_USER","SF_PWD","SF_WAREHOUSE","SF_DATABASE","SF_SCHEMA","SF_REGION"].forEach(varName => {
+  if (!process.env[varName]) {
+    console.error(`❌ Missing required env var: ${varName}`);
+    process.exit(1);
+  }
+});
+
+// Log Snowflake configuration for debugging
+console.log('Snowflake config:', {
+  account: process.env.SF_ACCOUNT,
+  region: process.env.SF_REGION,
+  user: process.env.SF_USER,
+  warehouse: process.env.SF_WAREHOUSE,
+  database: process.env.SF_DATABASE,
+  schema: process.env.SF_SCHEMA,
+  role: process.env.SF_ROLE || '(default)'
+});
+
+// Snowflake connection
+const sfConn = snowflake.createConnection({
+  account:   process.env.SF_ACCOUNT,
+  region:    process.env.SF_REGION,
+  username:  process.env.SF_USER,
+  password:  process.env.SF_PWD,
+  warehouse: process.env.SF_WAREHOUSE,
+  database:  process.env.SF_DATABASE,
+  schema:    process.env.SF_SCHEMA,
+  role:      process.env.SF_ROLE
+});
+
+sfConn.connect((err) => {
+  if (err) {
+    logSfError(err, "connection");
+    process.exit(1);
+  }
+  console.log("✅ Snowflake connection established");
+});
 
 // Supported reports
 const reports = { AgedReceivables: "" };
 
 async function loadTokens() {
   try {
-    return JSON.parse(await fs.readFile(TOKEN_PATH, "utf8"));
+    const data = await fs.readFile(TOKEN_PATH, "utf8");
+    return JSON.parse(data);
   } catch {
     return {};
   }
 }
+
 async function saveTokens(tokens) {
   try {
     await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), "utf8");
@@ -57,7 +92,8 @@ app.get("/", (req, res) => {
 });
 
 app.get("/connect", (req, res) => {
-  const url = "https://appcenter.intuit.com/connect/oauth2?" +
+  const url =
+    "https://appcenter.intuit.com/connect/oauth2?" +
     qs.stringify({
       client_id,
       response_type: "code",
@@ -70,8 +106,9 @@ app.get("/connect", (req, res) => {
 
 app.get("/callback", async (req, res) => {
   const { code: authCode, realmId, error } = req.query;
-  if (error || !authCode) return res.status(400).send("Authentication failed.");
-
+  if (error || !authCode) {
+    return res.status(400).send("Authentication failed.");
+  }
   try {
     const tokenRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
@@ -83,11 +120,12 @@ app.get("/callback", async (req, res) => {
         }
       }
     );
-    await saveTokens({
-      access_token:  tokenRes.data.access_token,
+    const tokens = {
+      access_token: tokenRes.data.access_token,
       refresh_token: tokenRes.data.refresh_token,
-      realm_id:      realmId
-    });
+      realm_id: realmId
+    };
+    await saveTokens(tokens);
     res.send("<h1>Authentication successful.</h1>");
   } catch {
     res.status(500).send("Token exchange failed.");
@@ -96,11 +134,13 @@ app.get("/callback", async (req, res) => {
 
 app.get("/report/:name", async (req, res) => {
   const name = req.params.name;
-  if (!(name in reports)) return res.status(400).send("Unsupported report.");
+  const defaultParams = reports[name];
+  if (defaultParams === undefined) return res.status(400).send("Unsupported report.");
 
-  // 1) QuickBooks token refresh
   const tokens = await loadTokens();
   if (!tokens.refresh_token || !tokens.realm_id) return res.status(401).send("Not connected.");
+
+  // 1️⃣ Refresh token logic (unchanged) ...
   try {
     const refreshRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
@@ -112,74 +152,58 @@ app.get("/report/:name", async (req, res) => {
         }
       }
     );
-    tokens.access_token  = refreshRes.data.access_token;
+    tokens.access_token = refreshRes.data.access_token;
     tokens.refresh_token = refreshRes.data.refresh_token;
     await saveTokens(tokens);
   } catch {
     return res.status(500).send("Token refresh failed.");
   }
 
-  // 2) Fetch the report
-  let data;
+  // 🔍 2️⃣ Log the QuickBooks API round-trip
+  const apiUrl = `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${name}${defaultParams}`;
+  console.log("🔍 Fetching report from QB:", apiUrl);
+
+  let response;
   try {
-    const apiUrl = `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${name}${reports[name]}`;
-    data = (await axios.get(apiUrl, {
+    response = await axios.get(apiUrl, {
       headers: { Authorization: `Bearer ${tokens.access_token}` }
-    })).data;
-  } catch {
+    });
+    console.log("✅ QB fetch status:", response.status);
+    console.log("📦 QB payload keys:", Object.keys(response.data));
+  } catch (err) {
+    console.error("❌ QB fetch error:", err.response?.status, err.message);
     return res.status(500).send("Report fetch failed.");
   }
+  const data = response.data;
 
-  // 3) Snowflake: per-request connection
-  const conn = snowflake.createConnection({
-    account:   process.env.SF_ACCOUNT,
-    region:    process.env.SF_REGION,
-    username:  process.env.SF_USER,
-    password:  process.env.SF_PWD,
-    warehouse: process.env.SF_WAREHOUSE,
-    database:  process.env.SF_DATABASE,
-    schema:    process.env.SF_SCHEMA,
-    role:      process.env.SF_ROLE
-  });
+  // 📝 3️⃣ Log what you’re inserting
+  const jsonString = JSON.stringify(data);
+  console.log(`📝 Inserting ${jsonString.length} bytes into ${process.env.SF_SCHEMA}.AGED_RECEIVABLES`);
 
-  // Promisify connect & destroy
-  const connectAsync = util.promisify(conn.connect).bind(conn);
-  const destroyAsync = util.promisify(conn.destroy).bind(conn);
+  sfConn.execute({
+    sqlText: `INSERT INTO AGED_RECEIVABLES (RAW) VALUES (PARSE_JSON(?))`,
+    binds: [jsonString],
+    complete: (err) => {
+      if (err) {
+        logSfError(err, "insert");
+        return res.status(500).send("Snowflake load failed.");
+      }
+      console.log("✅ Insert callback—no error");
 
-  // Wrap execute in a promise
-  function executeAsync(sqlText, binds) {
-    return new Promise((resolve, reject) => {
-      conn.execute({
-        sqlText,
-        binds,
-        complete: (err, stmt, rows) => {
-          if (err) return reject(err);
-          resolve({ stmt, rows });
+      // 🧮 4️⃣ Double-check row counts
+      sfConn.execute({
+        sqlText: `SELECT COUNT(*) AS CNT FROM ${process.env.SF_SCHEMA}.AGED_RECEIVABLES`,
+        complete: (err2, stmt, rows) => {
+          if (err2) {
+            logSfError(err2, "count");
+          } else {
+            console.log("🧮 Total rows now in AGED_RECEIVABLES:", rows[0].CNT);
+          }
+          res.send("Data loaded.");
         }
       });
-    });
-  }
-
-  try {
-    await connectAsync();
-  } catch (err) {
-    logSfError(err, "connect");
-    return res.status(500).send("Snowflake connection failed.");
-  }
-
-  try {
-    await executeAsync(
-      `INSERT INTO ${name.toUpperCase()} (RAW) VALUES (PARSE_JSON(?))`,
-      [JSON.stringify(data)]
-    );
-    res.send("Data loaded.");
-  } catch (err) {
-    logSfError(err, "insert");
-    res.status(500).send("Snowflake load failed.");
-  } finally {
-    try { await destroyAsync(); }
-    catch (_) { /* ignore */ }
-  }
+    }
+  });
 });
 
 app.listen(port, () => console.log(`Listening on port ${port}`));
