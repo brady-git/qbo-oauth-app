@@ -140,7 +140,7 @@ app.get("/report/:name", async (req, res) => {
   const tokens = await loadTokens();
   if (!tokens.refresh_token || !tokens.realm_id) return res.status(401).send("Not connected.");
 
-  // 1️⃣ Refresh token logic (unchanged) ...
+  // 1️⃣ Refresh token logic
   try {
     const refreshRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
@@ -178,10 +178,15 @@ app.get("/report/:name", async (req, res) => {
 
   // 📝 3️⃣ Log what you’re inserting
   const jsonString = JSON.stringify(data);
-  console.log(`📝 Inserting ${jsonString.length} bytes into ${process.env.SF_SCHEMA}.AGED_RECEIVABLES`);
+  console.log(`📝 Inserting ${jsonString.length} bytes into ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES`);
 
+  // 🔧 4️⃣ Use INSERT … SELECT PARSE_JSON(?)
+  const insertSql = `
+    INSERT INTO ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES (RAW)
+    SELECT PARSE_JSON(?);
+  `;
   sfConn.execute({
-    sqlText: `INSERT INTO AGED_RECEIVABLES (RAW) VALUES (PARSE_JSON(?))`,
+    sqlText: insertSql,
     binds: [jsonString],
     complete: (err) => {
       if (err) {
@@ -190,9 +195,9 @@ app.get("/report/:name", async (req, res) => {
       }
       console.log("✅ Insert callback—no error");
 
-      // 🧮 4️⃣ Double-check row counts
+      // 🧮 5️⃣ Double-check row counts
       sfConn.execute({
-        sqlText: `SELECT COUNT(*) AS CNT FROM ${process.env.SF_SCHEMA}.AGED_RECEIVABLES`,
+        sqlText: `SELECT COUNT(*) AS CNT FROM ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES`,
         complete: (err2, stmt, rows) => {
           if (err2) {
             logSfError(err2, "count");
