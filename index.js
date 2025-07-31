@@ -1,214 +1,99 @@
+// index.js
 const express = require("express");
 const axios = require("axios");
 const qs = require("qs");
 const fs = require("fs").promises;
-const snowflake = require("snowflake-sdk");
 require("dotenv").config();
 
 const app = express();
-const port = process.env.PORT || 3000;
-const TOKEN_PATH = process.env.TOKEN_PATH || "/data/tokens.json";
+const PORT = process.env.PORT || 3000;
+const TOKEN_PATH = process.env.TOKEN_PATH || "./tokens.json";
 
-// OAuth credentials
-const client_id = process.env.CLIENT_ID;
-const client_secret = process.env.CLIENT_SECRET;
-const redirect_uri = process.env.REDIRECT_URI;
+const {
+  CLIENT_ID,
+  CLIENT_SECRET,
+  REDIRECT_URI,
+  QBO_API_BASE = "https://quickbooks.api.intuit.com"
+} = process.env;
 
-// Helper for standardized Snowflake error logging
-function logSfError(err, context = "connection") {
-  const resp = err.response || {};
-  console.error(
-    `❌ Snowflake ${context} error:`,
-    {
-      code: err.code,
-      status: resp.status,
-      statusText: resp.statusText,
-      url: err.config?.url
-    }
-  );
-}
-
-// Pre-flight check for required environment variables
-["SF_ACCOUNT","SF_USER","SF_PWD","SF_WAREHOUSE","SF_DATABASE","SF_SCHEMA","SF_REGION"].forEach(varName => {
-  if (!process.env[varName]) {
-    console.error(`❌ Missing required env var: ${varName}`);
-    process.exit(1);
-  }
-});
-
-// Log Snowflake configuration for debugging
-console.log('Snowflake config:', {
-  account: process.env.SF_ACCOUNT,
-  region: process.env.SF_REGION,
-  user: process.env.SF_USER,
-  warehouse: process.env.SF_WAREHOUSE,
-  database: process.env.SF_DATABASE,
-  schema: process.env.SF_SCHEMA,
-  role: process.env.SF_ROLE || '(default)'
-});
-
-// Snowflake connection
-const sfConn = snowflake.createConnection({
-  account:   process.env.SF_ACCOUNT,
-  region:    process.env.SF_REGION,
-  username:  process.env.SF_USER,
-  password:  process.env.SF_PWD,
-  warehouse: process.env.SF_WAREHOUSE,
-  database:  process.env.SF_DATABASE,
-  schema:    process.env.SF_SCHEMA,
-  role:      process.env.SF_ROLE
-});
-
-sfConn.connect((err) => {
-  if (err) {
-    logSfError(err, "connection");
-    process.exit(1);
-  }
-  console.log("✅ Snowflake connection established");
-});
-
-// Supported reports
-const reports = { AgedReceivables: "" };
-
-async function loadTokens() {
-  try {
-    const data = await fs.readFile(TOKEN_PATH, "utf8");
-    return JSON.parse(data);
-  } catch {
-    return {};
-  }
-}
-
-async function saveTokens(tokens) {
-  try {
-    await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), "utf8");
-  } catch (err) {
-    console.error("❌ Error saving tokens: ", err.message);
-  }
-}
-
-app.get("/", (req, res) => {
-  res.send('<a href="/connect">Connect to QuickBooks</a>');
-});
-
+// 1️⃣ Route to redirect user for manual auth
 app.get("/connect", (req, res) => {
-  const url =
-    "https://appcenter.intuit.com/connect/oauth2?" +
-    qs.stringify({
-      client_id,
-      response_type: "code",
-      scope: "com.intuit.quickbooks.accounting openid",
-      redirect_uri,
-      state: "xyz123"
-    });
-  res.redirect(url);
+  const params = qs.stringify({
+    client_id: CLIENT_ID,
+    response_type: "code",
+    redirect_uri: REDIRECT_URI,
+    scope: "com.intuit.quickbooks.accounting",
+    state: "randomstate123"
+  });
+  res.redirect(`https://appcenter.intuit.com/connect/oauth2?${params}`);
 });
 
+// 2️⃣ OAuth2 callback: exchange code for tokens and persist to disk
 app.get("/callback", async (req, res) => {
-  const { code: authCode, realmId, error } = req.query;
-  if (error || !authCode) {
-    return res.status(400).send("Authentication failed.");
+  const { code, realmId } = req.query;
+  if (!code || !realmId) {
+    return res.status(400).send("Missing code or realmId");
   }
+
   try {
-    const tokenRes = await axios.post(
+    const tokenResp = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-      qs.stringify({ grant_type: "authorization_code", code: authCode, redirect_uri }),
+      qs.stringify({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: REDIRECT_URI
+      }),
       {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization: `Basic ${Buffer.from(`${client_id}:${client_secret}`).toString("base64")}`
-        }
+        auth: { username: CLIENT_ID, password: CLIENT_SECRET },
+        headers: { "Content-Type": "application/x-www-form-urlencoded" }
       }
     );
     const tokens = {
-      access_token: tokenRes.data.access_token,
-      refresh_token: tokenRes.data.refresh_token,
-      realm_id: realmId
+      realmId,
+      access_token: tokenResp.data.access_token,
+      refresh_token: tokenResp.data.refresh_token,
+      expires_in: tokenResp.data.expires_in,          // seconds
+      obtained_at: Date.now()
     };
-    await saveTokens(tokens);
-    res.send("<h1>Authentication successful.</h1>");
-  } catch {
-    res.status(500).send("Token exchange failed.");
-  }
-});
-
-app.get("/report/:name", async (req, res) => {
-  const name = req.params.name;
-  const defaultParams = reports[name];
-  if (defaultParams === undefined) return res.status(400).send("Unsupported report.");
-
-  const tokens = await loadTokens();
-  if (!tokens.refresh_token || !tokens.realm_id) return res.status(401).send("Not connected.");
-
-  // 1️⃣ Refresh token logic
-  try {
-    const refreshRes = await axios.post(
-      "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-      qs.stringify({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
-      {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization: `Basic ${Buffer.from(`${client_id}:${client_secret}`).toString("base64")}`
-        }
-      }
-    );
-    tokens.access_token = refreshRes.data.access_token;
-    tokens.refresh_token = refreshRes.data.refresh_token;
-    await saveTokens(tokens);
-  } catch {
-    return res.status(500).send("Token refresh failed.");
-  }
-
-  // 🔍 2️⃣ Log the QuickBooks API round-trip
-  const apiUrl = `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${name}${defaultParams}`;
-  console.log("🔍 Fetching report from QB:", apiUrl);
-
-  let response;
-  try {
-    response = await axios.get(apiUrl, {
-      headers: { Authorization: `Bearer ${tokens.access_token}` }
-    });
-    console.log("✅ QB fetch status:", response.status);
-    console.log("📦 QB payload keys:", Object.keys(response.data));
+    await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens, null, 2), "utf8");
+    res.send(`
+      <p>Authentication successful!</p>
+      <p>Now visit <a href="/report?reportName=AgedReceivables">/report?reportName=YourReport</a></p>
+    `);
   } catch (err) {
-    console.error("❌ QB fetch error:", err.response?.status, err.message);
-    return res.status(500).send("Report fetch failed.");
+    console.error("Token exchange failed:", err.response?.data || err);
+    res.status(500).send("OAuth token exchange failed");
   }
-  const data = response.data;
-
-  // 📝 3️⃣ Log what you’re inserting
-  const jsonString = JSON.stringify(data);
-  console.log(`📝 Inserting ${jsonString.length} bytes into ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES`);
-
-  // 🔧 4️⃣ Use INSERT … SELECT PARSE_JSON(?)
-  const insertSql = `
-    INSERT INTO ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES (RAW)
-    SELECT PARSE_JSON(?);
-  `;
-  sfConn.execute({
-    sqlText: insertSql,
-    binds: [jsonString],
-    complete: (err) => {
-      if (err) {
-        logSfError(err, "insert");
-        return res.status(500).send("Snowflake load failed.");
-      }
-      console.log("✅ Insert callback—no error");
-
-      // 🧮 5️⃣ Double-check row counts
-      sfConn.execute({
-        sqlText: `SELECT COUNT(*) AS CNT FROM ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES`,
-        complete: (err2, stmt, rows) => {
-          if (err2) {
-            logSfError(err2, "count");
-          } else {
-            console.log("🧮 Total rows now in AGED_RECEIVABLES:", rows[0].CNT);
-          }
-          res.send("Data loaded.");
-        }
-      });
-    }
-  });
 });
 
-app.listen(port, () => console.log(`Listening on port ${port}`));
+// 3️⃣ Fetch a QuickBooks report and return the JSON
+app.get("/report", async (req, res) => {
+  const { reportName } = req.query;
+  if (!reportName) {
+    return res.status(400).send("Please specify ?reportName=");
+  }
+
+  let tokens;
+  try {
+    tokens = JSON.parse(await fs.readFile(TOKEN_PATH, "utf8"));
+  } catch {
+    return res.status(400).send("No tokens found. Authenticate via /connect first.");
+  }
+
+  try {
+    // If needed, check expiry and use refresh_token flow here...
+
+    const resp = await axios.get(
+      `${QBO_API_BASE}/v3/company/${tokens.realmId}/reports/${reportName}`,
+      { headers: { Authorization: `Bearer ${tokens.access_token}` } }
+    );
+    res.json(resp.data);
+  } catch (err) {
+    console.error("Report fetch failed:", err.response?.data || err);
+    res.status(500).send("Failed to fetch report");
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`App listening on port ${PORT}`);
+});
