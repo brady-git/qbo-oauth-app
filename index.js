@@ -11,7 +11,7 @@ const port = process.env.PORT || 3000;
 const TOKEN_PATH = process.env.TOKEN_PATH || "./tokens.json";
 
 // Snowflake error logger
-tfunction logSfError(err, context = "connection") {
+function logSfError(err, context = "connection") {
   const resp = err.response || {};
   console.error(`❌ Snowflake ${context} error:`, {
     code: err.code,
