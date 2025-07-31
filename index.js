@@ -7,7 +7,7 @@ require("dotenv").config();
 
 const app = express();
 const port = process.env.PORT || 3000;
-const TOKEN_PATH = "./tokens.json";
+const TOKEN_PATH = process.env.TOKEN_PATH || "/data/tokens.json";
 
 // OAuth credentials
 const client_id = process.env.CLIENT_ID;
