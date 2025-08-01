@@ -130,6 +130,22 @@ app.get("/callback", async (req, res) => {
   }
 });
 
+// Quick check that sfConn.execute callbacks are firing
+app.get("/test-sf", (req, res) => {
+  sfConn.execute({
+    sqlText: "SELECT CURRENT_TIMESTAMP() AS now",
+    complete: (err, stmt, rows) => {
+      if (err) {
+        console.error("[test-sf] ❌", err.message);
+        return res.status(500).send(`Error: ${err.message}`);
+      }
+      console.log("[test-sf] ✅", rows);
+      return res.json(rows);
+    }
+  });
+});
+
+
 // REPORT endpoint (with bind parameter insert)
 app.get("/report/:name", async (req, res) => {
   const name = req.params.name;
