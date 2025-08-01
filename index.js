@@ -10,6 +10,12 @@ const app = express();
 const port = process.env.PORT || 3000;
 const TOKEN_PATH = process.env.TOKEN_PATH || "./tokens.json";
 
+// Simple request logger
+app.use((req, res, next) => {
+  console.log(`[req] ${req.method} ${req.url}`);
+  next();
+});
+
 // Snowflake error logger
 function logSfError(err, context = "connection") {
   const resp = err.response || {};
@@ -24,7 +30,8 @@ function logSfError(err, context = "connection") {
 // Validate required env vars
 [
   "SF_ACCOUNT","SF_USER","SF_PWD",
-  "SF_WAREHOUSE","SF_DATABASE","SF_SCHEMA","SF_REGION"
+  "SF_WAREHOUSE","SF_DATABASE","SF_SCHEMA","SF_REGION",
+  "CLIENT_ID","CLIENT_SECRET","REDIRECT_URI"
 ].forEach(name => {
   if (!process.env[name]) {
     console.error(`❌ Missing env var: ${name}`);
@@ -124,9 +131,10 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// REPORT endpoint (patched)
+// REPORT endpoint
 app.get("/report/:name", async (req, res) => {
   const name = req.params.name;
+
   if (!(name in reports)) {
     console.warn(`[report] Unsupported report name: ${name}`);
     return res.status(400).send("Unsupported report.");
@@ -202,5 +210,7 @@ app.get("/report/:name", async (req, res) => {
   });
 });
 
-// Start server
-app.listen(port, () => console.log(`Listening on http://0.0.0.0:${port}`));
+// Start server, binding to 0.0.0.0
+app.listen(port, "0.0.0.0", () => {
+  console.log(`Listening on http://0.0.0.0:${port}`);
+});
