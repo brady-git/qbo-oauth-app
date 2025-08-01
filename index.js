@@ -6,17 +6,17 @@ const fs        = require("fs").promises;
 const snowflake = require("snowflake-sdk");
 require("dotenv").config();
 
-const app = express();
-const port = process.env.PORT || 3000;
+const app        = express();
+const port       = process.env.PORT || 3000;
 const TOKEN_PATH = process.env.TOKEN_PATH || "./tokens.json";
 
-// Simple request logger
+// --- Simple request logger (for debugging) ---
 app.use((req, res, next) => {
   console.log(`[req] ${req.method} ${req.url}`);
   next();
 });
 
-// Snowflake error logger
+// --- Snowflake error logger ---
 function logSfError(err, context = "connection") {
   const resp = err.response || {};
   console.error(`❌ Snowflake ${context} error:`, {
@@ -27,11 +27,11 @@ function logSfError(err, context = "connection") {
   });
 }
 
-// Validate required env vars
+// --- Validate required env vars ---
 [
-  "SF_ACCOUNT","SF_USER","SF_PWD",
-  "SF_WAREHOUSE","SF_DATABASE","SF_SCHEMA","SF_REGION",
-  "CLIENT_ID","CLIENT_SECRET","REDIRECT_URI"
+  "CLIENT_ID", "CLIENT_SECRET", "REDIRECT_URI",
+  "SF_ACCOUNT", "SF_USER", "SF_PWD",
+  "SF_WAREHOUSE", "SF_DATABASE", "SF_SCHEMA", "SF_REGION", "SF_ROLE"
 ].forEach(name => {
   if (!process.env[name]) {
     console.error(`❌ Missing env var: ${name}`);
@@ -39,7 +39,7 @@ function logSfError(err, context = "connection") {
   }
 });
 
-// Establish Snowflake connection
+// --- Establish Snowflake connection ---
 const sfConn = snowflake.createConnection({
   account:   process.env.SF_ACCOUNT,
   region:    process.env.SF_REGION,
@@ -58,12 +58,12 @@ sfConn.connect(err => {
   console.log("✅ Snowflake connection established");
 });
 
-// Supported QuickBooks reports
+// --- Supported QuickBooks reports ---
 const reports = {
   AgedReceivables: ""
 };
 
-// Token utilities (file-based)
+// --- Token utilities (file-backed) ---
 async function loadTokens() {
   try {
     const str = await fs.readFile(TOKEN_PATH, "utf8");
@@ -76,14 +76,14 @@ async function saveTokens(tokens) {
   await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), "utf8");
 }
 
-// Routes
+// --- Routes ---
 
 // Home
 app.get("/", (req, res) => {
   res.send('<a href="/connect">Connect to QuickBooks</a>');
 });
 
-// OAuth connect
+// OAuth2: Redirect user to Intuit for consent
 app.get("/connect", (req, res) => {
   const params = qs.stringify({
     client_id:     process.env.CLIENT_ID,
@@ -95,7 +95,7 @@ app.get("/connect", (req, res) => {
   res.redirect(`https://appcenter.intuit.com/connect/oauth2?${params}`);
 });
 
-// OAuth callback
+// OAuth2 callback: exchange code for tokens
 app.get("/callback", async (req, res) => {
   const { code, realmId, error } = req.query;
   if (error || !code) return res.status(400).send("Authentication failed.");
@@ -117,7 +117,6 @@ app.get("/callback", async (req, res) => {
         }
       }
     );
-
     const tokens = {
       realm_id:      realmId,
       access_token:  tokenRes.data.access_token,
@@ -131,16 +130,15 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// REPORT endpoint
+// REPORT endpoint: fetch from QBO, insert into Snowflake
 app.get("/report/:name", async (req, res) => {
   const name = req.params.name;
-
   if (!(name in reports)) {
     console.warn(`[report] Unsupported report name: ${name}`);
     return res.status(400).send("Unsupported report.");
   }
 
-  // Load and validate tokens
+  // Load tokens
   const tokens = await loadTokens();
   if (!tokens.refresh_token || !tokens.realm_id) {
     console.warn("[report] No tokens found—user not connected");
@@ -174,7 +172,7 @@ app.get("/report/:name", async (req, res) => {
     return res.status(500).send("Token refresh failed.");
   }
 
-  // Fetch report from QuickBooks
+  // Fetch the report
   const apiUrl = `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${name}${reports[name]}`;
   let qbData;
   try {
@@ -189,14 +187,13 @@ app.get("/report/:name", async (req, res) => {
     return res.status(500).send("Failed to fetch report.");
   }
 
-  // Prepare and execute Snowflake insert
+  // Insert into Snowflake
   const jsonString = JSON.stringify(qbData);
   const insertSql = `
     INSERT INTO ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES (RAW)
     VALUES (PARSE_JSON($$${jsonString}$$));
   `;
   console.log("[report] Inserting into Snowflake…");
-
   sfConn.execute({
     sqlText: insertSql,
     complete: (err) => {
@@ -210,7 +207,7 @@ app.get("/report/:name", async (req, res) => {
   });
 });
 
-// Start server, binding to 0.0.0.0
+// Start the server, binding to 0.0.0.0 so Render exposes it
 app.listen(port, "0.0.0.0", () => {
   console.log(`Listening on http://0.0.0.0:${port}`);
 });
