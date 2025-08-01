@@ -130,7 +130,7 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// REPORT endpoint (patched insert)
+// REPORT endpoint (with bind parameter insert)
 app.get("/report/:name", async (req, res) => {
   const name = req.params.name;
   if (!(name in reports)) {
@@ -187,7 +187,7 @@ app.get("/report/:name", async (req, res) => {
     return res.status(500).send("Failed to fetch report.");
   }
 
-  // Insert into Snowflake using a bind param
+  // Insert into Snowflake using a bind parameter
   const jsonString = JSON.stringify(qbData);
   const insertSql = `
     INSERT INTO ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES (RAW)
@@ -197,16 +197,16 @@ app.get("/report/:name", async (req, res) => {
 
   sfConn.execute({
     sqlText: insertSql,
-    binds: [jsonString],
+    binds:   [jsonString],
     complete: (err, stmt) => {
       if (err) {
         logSfError(err, "insert");
-        return res.status(500).send("Snowflake insert failed.");
+        return res.status(500).send(`Insert failed: ${err.message}`);
       }
-      const rowsInserted = typeof stmt.getNumUpdatedRows === 'function'
+      const count = typeof stmt.getNumUpdatedRows === "function"
         ? stmt.getNumUpdatedRows()
-        : "<unknown>";
-      console.log(`[report] Snowflake insert succeeded (${rowsInserted} row(s))`);
+        : "(unknown)";
+      console.log(`[report] Snowflake insert succeeded — ${count} row(s)`);
       return res.send("✅ Report successfully ingested.");
     }
   });
