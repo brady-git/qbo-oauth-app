@@ -182,15 +182,6 @@ app.get("/report/:name", async (req, res) => {
         logSfError(err, "insert");
         return res.status(500).send("Snowflake insert failed.");
       }
-      // Optional verification
-      sfConn.execute({
-        sqlText: `SELECT COUNT(*) AS CNT FROM ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES`,
-        complete: (err2, stmt, rows) => {
-          if (err2) logSfError(err2, "verify");
-          console.log("🧮 Total rows:", rows?.[0]?.CNT);
-          res.send("Report loaded successfully.");
-        }
-      });
     }
   });
 });
