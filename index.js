@@ -53,18 +53,67 @@ const reports = {
   AgedReceivables: ""
 };
 
-// Token utilities
+// helper to run a query against sfConn, returning rows[]
+function runQuery({ sqlText, binds = [] }) {
+  return new Promise((resolve, reject) => {
+    sfConn.execute({
+      sqlText,
+      binds,
+      complete: (err, _stmt, rows) => {
+        if (err) return reject(err);
+        resolve(rows);
+      }
+    });
+  });
+}
+
+const QBO_TOKENS_TABLE = `${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.QBO_TOKENS`;
+
 async function loadTokens() {
-  try {
-    const str = await fs.readFile(TOKEN_PATH, "utf8");
-    return JSON.parse(str);
-  } catch {
-    return {};
+  const rows = await runQuery({
+    sqlText: `
+      SELECT realm_id, access_token, refresh_token
+      FROM ${QBO_TOKENS_TABLE}
+      LIMIT 1
+    `
+  });
+  if (rows.length === 0) {
+    return {};         // no tokens yet
   }
+  // Snowflake column names come back upper-cased
+  return {
+    realm_id:      rows[0].REALM_ID,
+    access_token:  rows[0].ACCESS_TOKEN,
+    refresh_token: rows[0].REFRESH_TOKEN
+  };
 }
-async function saveTokens(tokens) {
-  await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), "utf8");
+
+async function saveTokens({ realm_id, access_token, refresh_token }) {
+  // MERGE to upsert your single-row table
+  const mergeSql = `
+    MERGE INTO ${QBO_TOKENS_TABLE} AS tgt
+    USING (
+      SELECT
+        ?      AS realm_id,
+        ?      AS access_token,
+        ?      AS refresh_token
+    ) AS src
+      ON TRUE
+    WHEN MATCHED THEN
+      UPDATE SET
+        realm_id      = src.realm_id,
+        access_token  = src.access_token,
+        refresh_token = src.refresh_token
+    WHEN NOT MATCHED THEN
+      INSERT (realm_id, access_token, refresh_token)
+      VALUES (src.realm_id, src.access_token, src.refresh_token)
+  `;
+  await runQuery({
+    sqlText: mergeSql,
+    binds: [realm_id, access_token, refresh_token]
+  });
 }
+
 
 // Routes
 app.get("/", (req, res) => {
