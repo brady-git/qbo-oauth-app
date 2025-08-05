@@ -208,7 +208,8 @@ app.get("/report/:name", async (req, res) => {
   console.log("[report] about to execute insert, JSON length:", jsonString.length);
   const insertSql = `
     INSERT INTO ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES (RAW)
-    VALUES (PARSE_JSON(?));
+    SELECT PARSE_JSON(?);
+  `
   `;
 
   const stmt = sfConn.execute({
@@ -238,4 +239,3 @@ app.get("/report/:name", async (req, res) => {
 app.listen(port, "0.0.0.0", () => {
   console.log(`Listening on http://0.0.0.0:${port}`);
 });
-
