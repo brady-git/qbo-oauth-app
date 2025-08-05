@@ -35,13 +35,17 @@ const {
 } = process.env;
 
 // Validate required env
-[CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, SF_ACCOUNT, SF_REGION, SF_USER, SF_PWD, SF_WAREHOUSE, SF_DATABASE, SF_SCHEMA, SF_ROLE]
+[CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, SF_ACCOUNT, SF_USER, SF_PWD, SF_WAREHOUSE, SF_DATABASE, SF_SCHEMA, SF_ROLE]
   .forEach((v, i) => { if (!v) { console.error(`❌ Missing env var at index ${i}`); process.exit(1); }});
 
-// Connect Snowflake  (relay account + region to SDK)
+// Build full account locator (include region suffix if provided)
+const accountLocator = SF_REGION
+  ? `${SF_ACCOUNT}.${SF_REGION}`
+  : SF_ACCOUNT;
+
+// Connect Snowflake (let SDK derive the host from account locator)
 const sfConn = snowflake.createConnection({
-  account:   SF_ACCOUNT,
-  region:    SF_REGION,
+  account:   accountLocator,
   username:  SF_USER,
   password:  SF_PWD,
   warehouse: SF_WAREHOUSE,
@@ -49,8 +53,12 @@ const sfConn = snowflake.createConnection({
   schema:    SF_SCHEMA,
   role:      SF_ROLE
 });
+
 sfConn.connect(err => {
-  if (err) { console.error('❌ Snowflake connection error', err); process.exit(1); }
+  if (err) {
+    console.error('❌ Snowflake connection error', err);
+    process.exit(1);
+  }
   console.log('✅ Connected to Snowflake');
 });
 
@@ -117,7 +125,7 @@ app.get('/report/:name', async (req, res) => {
     // Fetch QuickBooks report
     const qbRes = await axios.get(
       `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${req.params.name}`,
-      { headers: { Authorization: `Bearer ${tokens.access_token}` } }
+      { headers: { Authorization: `Bearer ${tokens.access_token}` }}
     );
     console.log('[report] QB fetch OK');
 
