@@ -186,34 +186,36 @@ app.get("/report/:name", async (req, res) => {
   }
 
   const jsonString = JSON.stringify(qbData);
-  // DEBUG: log current Snowflake context
+  // DEBUG: fetch and log Snowflake context, then perform insert
   sfConn.execute({
     sqlText: "SELECT CURRENT_DATABASE() AS db, CURRENT_SCHEMA() AS schema, CURRENT_ROLE() AS role",
     complete: (err, stmt, rows) => {
-      if (err) console.error("[report] context query error:", err.message);
-      else console.log("[report] context:", rows);
-    }
-  });
-
-  console.log("[report] about to insert JSON length:", jsonString.length);
-  const insertSql = `INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW) SELECT PARSE_JSON(?);`;
-
-  const stmt = sfConn.execute({
-    sqlText: insertSql,
-    binds: [jsonString],
-    timeout: 60000,
-    complete: (err, stmt) => {
-      console.log("[report] insert callback fired");
       if (err) {
-        logSfError(err, "insert");
-        return res.status(500).send(`Insert failed: ${err.message}`);
+        console.error("[report] context query error:", err.message);
+        return res.status(500).send(`Context query failed: ${err.message}`);
       }
-      const count = typeof stmt.getNumUpdatedRows === 'function' ? stmt.getNumUpdatedRows() : '(unknown)';
-      console.log("[report] rows updated:", count);
-      res.send("✅ Report ingested.");
+      console.log("[report] context:", rows);
+
+      console.log("[report] about to insert JSON length:", jsonString.length);
+      const insertSql = `INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW) SELECT PARSE_JSON(?);`;
+      // Perform the actual insert
+      sfConn.execute({
+        sqlText: insertSql,
+        binds: [jsonString],
+        timeout: 60000,
+        complete: (err, stmt) => {
+          console.log("[report] insert callback fired");
+          if (err) {
+            logSfError(err, "insert");
+            return res.status(500).send(`Insert failed: ${err.message}`);
+          }
+          const count = typeof stmt.getNumUpdatedRows === 'function' ? stmt.getNumUpdatedRows() : '(unknown)';
+          console.log("[report] rows updated:", count);
+          res.send("✅ Report ingested.");
+        }
+      }).on("error", err => console.error("[report] stmt error:", err));
     }
   });
-  stmt.on("error", err => console.error("[report] stmt error:", err));
 });
 
 // Start server
