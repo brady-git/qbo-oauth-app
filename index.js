@@ -75,11 +75,8 @@ const reports = { AgedReceivables: "" };
 
 // --- Token I/O ---
 async function loadTokens() {
-  try {
-    return JSON.parse(await fs.readFile(TOKEN_PATH, "utf8"));
-  } catch {
-    return {};
-  }
+  try { return JSON.parse(await fs.readFile(TOKEN_PATH, "utf8")); }
+  catch { return {}; }
 }
 async function saveTokens(tokens) {
   await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), "utf8");
@@ -110,15 +107,15 @@ app.get("/callback", async (req, res) => {
     const tokenRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
       qs.stringify({ grant_type: "authorization_code", code, redirect_uri: REDIRECT_URI }),
-      { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${Buffer.from(
+      { headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: `Basic ${Buffer.from(
             `${CLIENT_ID}:${CLIENT_SECRET}`
-          ).toString("base64")}` } }
+          ).toString("base64")}`
+        }
+      }
     );
-    const tokens = {
-      realm_id:      realmId,
-      access_token:  tokenRes.data.access_token,
-      refresh_token: tokenRes.data.refresh_token
-    };
+    const tokens = { realm_id: realmId, access_token: tokenRes.data.access_token, refresh_token: tokenRes.data.refresh_token };
     await saveTokens(tokens);
     res.send("<h1>Authentication successful.</h1>");
   } catch (e) {
@@ -127,7 +124,7 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// Test Snowflake schema visibility
+// Test Snowflake visibility
 app.get("/test-sf", (req, res) => {
   sfConn.execute({
     sqlText: `SHOW TABLES IN SCHEMA ${SF_DATABASE}.${SF_SCHEMA} LIKE 'AGED_RECEIVABLES'`,
@@ -154,9 +151,13 @@ app.get("/report/:name", async (req, res) => {
     const refreshRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
       qs.stringify({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
-      { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${Buffer.from(
+      { headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: `Basic ${Buffer.from(
             `${CLIENT_ID}:${CLIENT_SECRET}`
-          ).toString("base64")}` } }
+          ).toString("base64")}`
+        }
+      }
     );
     tokens.access_token  = refreshRes.data.access_token;
     tokens.refresh_token = refreshRes.data.refresh_token;
@@ -182,9 +183,10 @@ app.get("/report/:name", async (req, res) => {
     return res.status(500).send("Fetch failed.");
   }
 
-  // Debug context and insert
+  // Debug context and then insert
   const jsonString = JSON.stringify(qbData);
-  sfConn.execute({
+  console.log("[report] running context query");
+  const ctxStmt = sfConn.execute({
     sqlText: "SELECT CURRENT_DATABASE() AS db, CURRENT_SCHEMA() AS schema, CURRENT_ROLE() AS role",
     complete: (err, stmt, rows) => {
       if (err) {
@@ -193,10 +195,9 @@ app.get("/report/:name", async (req, res) => {
       }
       console.log("[report] context:", rows);
 
-      // Now perform insert
       console.log("[report] about to insert JSON length:", jsonString.length);
       const insertSql = `INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW) SELECT PARSE_JSON(?);`;
-      sfConn.execute({
+      const insertStmt = sfConn.execute({
         sqlText: insertSql,
         binds: [jsonString],
         timeout: 60000,
@@ -205,15 +206,15 @@ app.get("/report/:name", async (req, res) => {
             logSfError(err, "insert");
             return res.status(500).send(`Insert failed: ${err.message}`);
           }
-          const count = typeof stmt.getNumUpdatedRows === 'function'
-            ? stmt.getNumUpdatedRows()
-            : '(unknown)';
+          const count = typeof stmt.getNumUpdatedRows === 'function' ? stmt.getNumUpdatedRows() : '(unknown)';
           console.log("[report] rows updated:", count);
           return res.send("✅ Report ingested.");
         }
       });
+      insertStmt.on("error", err => console.error("[report] insert stmt error:", err));
     }
   });
+  ctxStmt.on("error", err => console.error("[report] context stmt error:", err));
 });
 
 // Start server
