@@ -68,6 +68,24 @@ sfConn.connect(err => {
     process.exit(1);
   }
   console.log("✅ Snowflake connection established");
+  // Debug: log environment and session settings
+  console.log(`[startup] DB=${SF_DATABASE}, SCHEMA=${SF_SCHEMA}, WAREHOUSE=${SF_WAREHOUSE}, ROLE=${SF_ROLE}`);
+
+  // Explicitly set database and schema (redundant but diagnostic)
+  sfConn.execute({
+    sqlText: `USE DATABASE ${SF_DATABASE}`,
+    complete: (err) => {
+      if (err) logSfError(err, "use-database");
+      else console.log(`✅ Using database ${SF_DATABASE}`);
+    }
+  });
+  sfConn.execute({
+    sqlText: `USE SCHEMA ${SF_DATABASE}.${SF_SCHEMA}`,
+    complete: (err) => {
+      if (err) logSfError(err, "use-schema");
+      else console.log(`✅ Using schema ${SF_SCHEMA}`);
+    }
+  });
 });
 
 // --- Supported reports ---
