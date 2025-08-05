@@ -6,8 +6,45 @@ const fs        = require("fs").promises;
 const snowflake = require("snowflake-sdk");
 require("dotenv").config();
 
-const app        = express();
-const TOKEN_PATH = process.env.TOKEN_PATH || "./tokens.json";
+// --- Environment variables ---
+const {
+  CLIENT_ID,
+  CLIENT_SECRET,
+  REDIRECT_URI,
+  SF_ACCOUNT,
+  SF_USER,
+  SF_PWD,
+  SF_WAREHOUSE,
+  SF_DATABASE,
+  SF_SCHEMA,
+  SF_REGION,
+  SF_ROLE,
+  TOKEN_PATH = "./tokens.json",
+  PORT = 3000
+} = process.env;
+
+// --- Validate required environment variables ---
+const requiredEnv = {
+  CLIENT_ID,
+  CLIENT_SECRET,
+  REDIRECT_URI,
+  SF_ACCOUNT,
+  SF_USER,
+  SF_PWD,
+  SF_WAREHOUSE,
+  SF_DATABASE,
+  SF_SCHEMA,
+  SF_REGION,
+  SF_ROLE
+};
+Object.entries(requiredEnv).forEach(([key, value]) => {
+  if (!value) {
+    console.error(`❌ Missing env var: ${key}`);
+    process.exit(1);
+  }
+});
+
+const app = express();
 
 // --- Simple request logger ---
 app.use((req, res, next) => {
@@ -26,28 +63,16 @@ function logSfError(err, context = "connection") {
   });
 }
 
-// --- Validate env vars ---
-[
-  "CLIENT_ID","CLIENT_SECRET","REDIRECT_URI",
-  "SF_ACCOUNT","SF_USER","SF_PWD",
-  "SF_WAREHOUSE","SF_DATABASE","SF_SCHEMA","SF_REGION","SF_ROLE"
-].forEach(name => {
-  if (!process.env[name]) {
-    console.error(`❌ Missing env var: ${name}`);
-    process.exit(1);
-  }
-});
-
-// --- Connect to Snowflake ---
+// --- Snowflake connection ---
 const sfConn = snowflake.createConnection({
-  account:   process.env.SF_ACCOUNT,
-  region:    process.env.SF_REGION,
-  username:  process.env.SF_USER,
-  password:  process.env.SF_PWD,
-  warehouse: process.env.SF_WAREHOUSE,
-  database:  process.env.SF_DATABASE,
-  schema:    process.env.SF_SCHEMA,
-  role:      process.env.SF_ROLE
+  account:   SF_ACCOUNT,
+  region:    SF_REGION,
+  username:  SF_USER,
+  password:  SF_PWD,
+  warehouse: SF_WAREHOUSE,
+  database:  SF_DATABASE,
+  schema:    SF_SCHEMA,
+  role:      SF_ROLE
 });
 sfConn.connect(err => {
   if (err) {
@@ -55,29 +80,12 @@ sfConn.connect(err => {
     process.exit(1);
   }
   console.log("✅ Snowflake connection established");
-
-  // Ensure AGED_RECEIVABLES table exists
-  const createTableSql = `
-    CREATE TABLE IF NOT EXISTS ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES (
-      RAW VARIANT
-    );
-  `;
-  sfConn.execute({
-    sqlText: createTableSql,
-    complete: (err) => {
-      if (err) {
-        logSfError(err, "create-table");
-      } else {
-        console.log("✅ Ensured AGED_RECEIVABLES table exists");
-      }
-    }
-  });
 });
 
-// --- Which reports are supported ---
+// --- Supported reports ---
 const reports = { AgedReceivables: "" };
 
-// --- Token I/O (file-based; consider swapping to DB) ---
+// --- Token I/O ---
 async function loadTokens() {
   try { return JSON.parse(await fs.readFile(TOKEN_PATH, "utf8")); }
   catch { return {}; }
@@ -88,19 +96,17 @@ async function saveTokens(tokens) {
 
 // --- Routes ---
 
-// Home page
-app.get("/", (req, res) => {
-  res.send('<a href="/connect">Connect to QuickBooks</a>');
-});
+// Home
+app.get("/", (req, res) => res.send('<a href="/connect">Connect to QuickBooks</a>'));
 
-// Kick off OAuth flow
+// OAuth start
 app.get("/connect", (req, res) => {
   const params = qs.stringify({
-    client_id:     process.env.CLIENT_ID,
+    client_id: CLIENT_ID,
     response_type: "code",
-    scope:         "com.intuit.quickbooks.accounting openid",
-    redirect_uri:  process.env.REDIRECT_URI,
-    state:         "xyz123"
+    scope: "com.intuit.quickbooks.accounting openid",
+    redirect_uri: REDIRECT_URI,
+    state: "xyz123"
   });
   res.redirect(`https://appcenter.intuit.com/connect/oauth2?${params}`);
 });
@@ -112,10 +118,10 @@ app.get("/callback", async (req, res) => {
   try {
     const tokenRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-      qs.stringify({ grant_type: "authorization_code", code, redirect_uri: process.env.REDIRECT_URI }),
+      qs.stringify({ grant_type: "authorization_code", code, redirect_uri: REDIRECT_URI }),
       { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${Buffer.from(
-          `${process.env.CLIENT_ID}:${process.env.CLIENT_SECRET}`
-        ).toString("base64")}` } }
+            `${CLIENT_ID}:${CLIENT_SECRET}`
+          ).toString("base64")}` } }
     );
     const tokens = { realm_id: realmId, access_token: tokenRes.data.access_token, refresh_token: tokenRes.data.refresh_token };
     await saveTokens(tokens);
@@ -126,22 +132,19 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// Test Snowflake connection
+// Test Snowflake
 app.get("/test-sf", (req, res) => {
   sfConn.execute({
     sqlText: "SELECT CURRENT_TIMESTAMP() AS now",
     complete: (err, stmt, rows) => {
-      if (err) {
-        console.error("[test-sf] ❌", err.message);
-        return res.status(500).send(`SF test failed: ${err.message}`);
-      }
+      if (err) return res.status(500).send(`SF test failed: ${err.message}`);
       console.log("[test-sf] ✅", rows);
-      return res.json(rows);
+      res.json(rows);
     }
   });
 });
 
-// REPORT endpoint with enhanced logging & timeout
+// Report ingestion
 app.get("/report/:name", async (req, res) => {
   console.log("[report] handler start");
   const name = req.params.name;
@@ -156,10 +159,10 @@ app.get("/report/:name", async (req, res) => {
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
       qs.stringify({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
       { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${Buffer.from(
-          `${process.env.CLIENT_ID}:${process.env.CLIENT_SECRET}`
-        ).toString("base64")}` } }
+            `${CLIENT_ID}:${CLIENT_SECRET}`
+          ).toString("base64")}` } }
     );
-    tokens.access_token  = refreshRes.data.access_token;
+    tokens.access_token = refreshRes.data.access_token;
     tokens.refresh_token = refreshRes.data.refresh_token;
     await saveTokens(tokens);
     console.log("[report] Token refresh successful");
@@ -171,11 +174,11 @@ app.get("/report/:name", async (req, res) => {
   let qbData;
   try {
     console.log(`[report] Fetching ${name}`);
-    const response = await axios.get(
+    const resp = await axios.get(
       `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${name}`,
       { headers: { Authorization: `Bearer ${tokens.access_token}` } }
     );
-    qbData = response.data;
+    qbData = resp.data;
     console.log("[report] Fetch successful");
   } catch (e) {
     console.error("❌ QuickBooks fetch error", e.response?.data || e);
@@ -184,31 +187,25 @@ app.get("/report/:name", async (req, res) => {
 
   const jsonString = JSON.stringify(qbData);
   console.log("[report] about to insert JSON length:", jsonString.length);
-  const insertSql = `
-    INSERT INTO ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES (RAW)
-    SELECT PARSE_JSON(?);
-  `;
+  const insertSql = `INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW) SELECT PARSE_JSON(?);`;
 
   const stmt = sfConn.execute({
     sqlText: insertSql,
-    binds:   [jsonString],
-    timeout: 60 * 1000,
+    binds: [jsonString],
+    timeout: 60000,
     complete: (err, stmt) => {
       console.log("[report] insert callback fired");
       if (err) {
         logSfError(err, "insert");
         return res.status(500).send(`Insert failed: ${err.message}`);
       }
-      const count = typeof stmt.getNumUpdatedRows === "function" ? stmt.getNumUpdatedRows() : "(unknown)";
+      const count = typeof stmt.getNumUpdatedRows === 'function' ? stmt.getNumUpdatedRows() : '(unknown)';
       console.log("[report] rows updated:", count);
-      return res.send("✅ Report ingested.");
+      res.send("✅ Report ingested.");
     }
   });
   stmt.on("error", err => console.error("[report] stmt error:", err));
 });
 
-// Start server — ensure this is at file bottom and unwrapped
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`Listening on http://0.0.0.0:${PORT}`);
-});
+// Start server
+app.listen(PORT, "0.0.0.0", () => console.log(`Listening on http://0.0.0.0:${PORT}`));
