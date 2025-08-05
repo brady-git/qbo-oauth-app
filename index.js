@@ -201,18 +201,19 @@ app.get("/report/:name", async (req, res) => {
     return res.status(500).send("Fetch failed.");
   }
 
-  // Debug context and then insert
+  // Debug simple connectivity and then insert
   const jsonString = JSON.stringify(qbData);
-  console.log("[report] running context query");
-  const ctxStmt = sfConn.execute({
-    sqlText: "SELECT CURRENT_DATABASE() AS db, CURRENT_SCHEMA() AS curr_schema, CURRENT_ROLE() AS role",
+  console.log("[report] running ping query");
+  const pingStmt = sfConn.execute({
+    sqlText: "SELECT 1 AS ping",
     complete: (err, stmt, rows) => {
       if (err) {
-        console.error("[report] context query error:", err.message);
-        return res.status(500).send(`Context query failed: ${err.message}`);
+        console.error("[report] ping query error:", err.message);
+        return res.status(500).send(`Ping query failed: ${err.message}`);
       }
-      console.log("[report] context:", rows);
+      console.log("[report] ping result:", rows);
 
+      // now perform insert
       console.log("[report] about to insert JSON length:", jsonString.length);
       const insertSql = `INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW) SELECT PARSE_JSON(?);`;
       const insertStmt = sfConn.execute({
@@ -232,7 +233,7 @@ app.get("/report/:name", async (req, res) => {
       insertStmt.on("error", err => console.error("[report] insert stmt error:", err));
     }
   });
-  ctxStmt.on("error", err => console.error("[report] context stmt error:", err));
+  pingStmt.on("error", err => console.error("[report] ping stmt error:", err));("error", err => console.error("[report] context stmt error:", err));
 });
 
 // Start server
