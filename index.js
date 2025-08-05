@@ -137,104 +137,10 @@ app.get("/test-sf", (req, res) => {
     complete: (err, stmt, rows) => {
       if (err) {
         console.error("[test-sf] ❌", err.message);
-        return res.status(500).send(`Error: ${err.message}`);
+        return res.status(500).send(`Insert failed: ${err.message}`);
       }
       console.log("[test-sf] ✅", rows);
       return res.json(rows);
     }
   });
-});
-
-// REPORT endpoint (with bind parameter insert + enhanced logging/timeouts)
-app.get("/report/:name", async (req, res) => {
-  console.log("[report] handler start");
-  const name = req.params.name;
-  if (!(name in reports)) {
-    console.warn(`[report] Unsupported report name: ${name}`);
-    return res.status(400).send("Unsupported report.");
-  }
-
-  // Load tokens
-  const tokens = await loadTokens();
-  if (!tokens.refresh_token || !tokens.realm_id) {
-    console.warn("[report] No tokens found—user not connected");
-    return res.status(401).send("Not connected. Visit /connect first.");
-  }
-
-  // Refresh access token
-  try {
-    console.log("[report] Refreshing QuickBooks access token…");
-    const refreshRes = await axios.post(
-      "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-      qs.stringify({
-        grant_type:    "refresh_token",
-        refresh_token: tokens.refresh_token
-      }),
-      {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization: `Basic ${Buffer.from(
-            `${process.env.CLIENT_ID}:${process.env.CLIENT_SECRET}`
-          ).toString("base64")}`
-        }
-      }
-    );
-    tokens.access_token  = refreshRes.data.access_token;
-    tokens.reload_tokens = refreshRes.data.refresh_token;
-    await saveTokens(tokens);
-    console.log("[report] Token refresh successful");
-  } catch (e) {
-    console.error("❌ Refresh token failed", e.response?.data || e);
-    return res.status(500).send("Token refresh failed.");
-  }
-
-  // Fetch from QuickBooks
-  let qbData;
-  try {
-    console.log(`[report] Fetching QuickBooks report: ${name}`);
-    const response = await axios.get(
-      `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${name}${reports[name]}`,
-      { headers: { Authorization: `Bearer ${tokens.access_token}` } }
-    );
-    qbData = response.data;
-    console.log("[report] QuickBooks fetch successful");
-  } catch (e) {
-    console.error("❌ QuickBooks fetch error", e.response?.data || e);
-    return res.status(500).send("Failed to fetch report.");
-  }
-
-  // Insert into Snowflake using a bind parameter
-  const jsonString = JSON.stringify(qbData);
-  console.log("[report] about to execute insert, JSON length:", jsonString.length);
-  const insertSql = `
-    INSERT INTO ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES (RAW)
-    SELECT PARSE_JSON(?);
-  `;
-
-  const stmt = sfConn.execute({
-    sqlText: insertSql,
-    binds:   [jsonString],
-    timeout: 60 * 1000,  // 60-second timeout
-    complete: (err, stmt) => {
-      console.log("[report] insert complete callback fired");
-      if (err) {
-        logSfError(err, "insert");
-        return res.status(500).send(`Insert failed: ${err.message}`);
-      }
-      const count = typeof stmt.getNumUpdatedRows === "function"
-        ? stmt.getNumUpdatedRows()
-        : "(unknown)";
-      console.log("[report] rows updated:", count);
-      return res.send("✅ Report successfully ingested.");
-    }
-  });
-
-  stmt.on("error", err => {
-    console.error("[report] statement error event:", err);
-  });
-});
-
-// Start server
-app.listen(port, "0.0.0.0", () => {
-  console.log(`Listening on http://0.0.0.0:${port}`);
 });
