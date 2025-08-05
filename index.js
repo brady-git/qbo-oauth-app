@@ -116,9 +116,13 @@ app.get("/callback", async (req, res) => {
     const tokenRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
       qs.stringify({ grant_type: "authorization_code", code, redirect_uri: REDIRECT_URI }),
-      { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${Buffer.from(
+      { headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization: `Basic ${Buffer.from(
             `${CLIENT_ID}:${CLIENT_SECRET}`
-          ).toString("base64")}` } }
+          ).toString("base64")}`
+        }
+      }
     );
     const tokens = { realm_id: realmId, access_token: tokenRes.data.access_token, refresh_token: tokenRes.data.refresh_token };
     await saveTokens(tokens);
@@ -165,9 +169,13 @@ app.get("/report/:name", (req, res) => {
         const refreshRes = await axios.post(
           "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
           qs.stringify({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
-          { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${Buffer.from(
+          { headers: {
+              "Content-Type": "application/x-www-form-urlencoded",
+              Authorization: `Basic ${Buffer.from(
                 `${CLIENT_ID}:${CLIENT_SECRET}`
-              ).toString("base64")}` } }
+              ).toString("base64")}`
+            }
+          }
         );
         tokens.access_token  = refreshRes.data.access_token;
         tokens.refresh_token = refreshRes.data.refresh_token;
@@ -207,5 +215,4 @@ app.get("/report/:name", (req, res) => {
 });
 
 // Start server
-app.listen(PORT, "0.0.0.0", () => console.log(`Listening on http://0.0.0.0:${PORT}`));
 app.listen(PORT, "0.0.0.0", () => console.log(`Listening on http://0.0.0.0:${PORT}`));
