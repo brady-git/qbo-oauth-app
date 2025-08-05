@@ -24,19 +24,7 @@ const {
 } = process.env;
 
 // --- Validate required environment variables ---
-const requiredEnv = {
-  CLIENT_ID,
-  CLIENT_SECRET,
-  REDIRECT_URI,
-  SF_ACCOUNT,
-  SF_USER,
-  SF_PWD,
-  SF_WAREHOUSE,
-  SF_DATABASE,
-  SF_SCHEMA,
-  SF_REGION,
-  SF_ROLE
-};
+const requiredEnv = { CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, SF_ACCOUNT, SF_USER, SF_PWD, SF_WAREHOUSE, SF_DATABASE, SF_SCHEMA, SF_REGION, SF_ROLE };
 Object.entries(requiredEnv).forEach(([key, value]) => {
   if (!value) {
     console.error(`❌ Missing env var: ${key}`);
@@ -87,8 +75,11 @@ const reports = { AgedReceivables: "" };
 
 // --- Token I/O ---
 async function loadTokens() {
-  try { return JSON.parse(await fs.readFile(TOKEN_PATH, "utf8")); }
-  catch { return {}; }
+  try {
+    return JSON.parse(await fs.readFile(TOKEN_PATH, "utf8"));
+  } catch {
+    return {};
+  }
 }
 async function saveTokens(tokens) {
   await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), "utf8");
@@ -123,7 +114,11 @@ app.get("/callback", async (req, res) => {
             `${CLIENT_ID}:${CLIENT_SECRET}`
           ).toString("base64")}` } }
     );
-    const tokens = { realm_id: realmId, access_token: tokenRes.data.access_token, refresh_token: tokenRes.data.refresh_token };
+    const tokens = {
+      realm_id:      realmId,
+      access_token:  tokenRes.data.access_token,
+      refresh_token: tokenRes.data.refresh_token
+    };
     await saveTokens(tokens);
     res.send("<h1>Authentication successful.</h1>");
   } catch (e) {
@@ -132,13 +127,13 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// Test Snowflake: DESCRIBE AGED_RECEIVABLES for debug
+// Test Snowflake schema visibility
 app.get("/test-sf", (req, res) => {
   sfConn.execute({
-    sqlText: `DESCRIBE TABLE ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES`,
+    sqlText: `SHOW TABLES IN SCHEMA ${SF_DATABASE}.${SF_SCHEMA} LIKE 'AGED_RECEIVABLES'`,
     complete: (err, stmt, rows) => {
-      if (err) return res.status(500).send(`DESCRIBE failed: ${err.message}`);
-      console.log("[test-sf] DESCRIBE rows:", rows);
+      if (err) return res.status(500).send(`SHOW TABLES failed: ${err.message}`);
+      console.log("[test-sf] tables: ", rows);
       res.json(rows);
     }
   });
@@ -153,6 +148,7 @@ app.get("/report/:name", async (req, res) => {
   const tokens = await loadTokens();
   if (!tokens.refresh_token) return res.status(401).send("Not connected.");
 
+  // Refresh token
   try {
     console.log("[report] Refreshing token…");
     const refreshRes = await axios.post(
@@ -162,7 +158,7 @@ app.get("/report/:name", async (req, res) => {
             `${CLIENT_ID}:${CLIENT_SECRET}`
           ).toString("base64")}` } }
     );
-    tokens.access_token = refreshRes.data.access_token;
+    tokens.access_token  = refreshRes.data.access_token;
     tokens.refresh_token = refreshRes.data.refresh_token;
     await saveTokens(tokens);
     console.log("[report] Token refresh successful");
@@ -171,22 +167,23 @@ app.get("/report/:name", async (req, res) => {
     return res.status(500).send("Token refresh failed.");
   }
 
+  // Fetch from QuickBooks
   let qbData;
   try {
     console.log(`[report] Fetching ${name}`);
-    const resp = await axios.get(
+    const response = await axios.get(
       `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${name}`,
       { headers: { Authorization: `Bearer ${tokens.access_token}` } }
     );
-    qbData = resp.data;
+    qbData = response.data;
     console.log("[report] Fetch successful");
   } catch (e) {
     console.error("❌ QuickBooks fetch error", e.response?.data || e);
     return res.status(500).send("Fetch failed.");
   }
 
+  // Debug context and insert
   const jsonString = JSON.stringify(qbData);
-  // DEBUG: fetch and log Snowflake context, then perform insert
   sfConn.execute({
     sqlText: "SELECT CURRENT_DATABASE() AS db, CURRENT_SCHEMA() AS schema, CURRENT_ROLE() AS role",
     complete: (err, stmt, rows) => {
@@ -196,24 +193,25 @@ app.get("/report/:name", async (req, res) => {
       }
       console.log("[report] context:", rows);
 
+      // Now perform insert
       console.log("[report] about to insert JSON length:", jsonString.length);
       const insertSql = `INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW) SELECT PARSE_JSON(?);`;
-      // Perform the actual insert
       sfConn.execute({
         sqlText: insertSql,
         binds: [jsonString],
         timeout: 60000,
         complete: (err, stmt) => {
-          console.log("[report] insert callback fired");
           if (err) {
             logSfError(err, "insert");
             return res.status(500).send(`Insert failed: ${err.message}`);
           }
-          const count = typeof stmt.getNumUpdatedRows === 'function' ? stmt.getNumUpdatedRows() : '(unknown)';
+          const count = typeof stmt.getNumUpdatedRows === 'function'
+            ? stmt.getNumUpdatedRows()
+            : '(unknown)';
           console.log("[report] rows updated:", count);
-          res.send("✅ Report ingested.");
+          return res.send("✅ Report ingested.");
         }
-      }).on("error", err => console.error("[report] stmt error:", err));
+      });
     }
   });
 });
