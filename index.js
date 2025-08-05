@@ -50,16 +50,17 @@ const {
 [CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, SF_ACCOUNT, SF_USER, SF_PWD, SF_WAREHOUSE, SF_DATABASE, SF_SCHEMA, SF_REGION, SF_ROLE]
   .forEach((v, i) => { if (!v) { console.error('❌ Missing env var'); process.exit(1); }});
 
-// Connect Snowflake
+// Connect Snowflake using explicit host
+const sfHost = `${SF_ACCOUNT}.${SF_REGION}.snowflakecomputing.com`;
 const sfConn = snowflake.createConnection({
   account:   SF_ACCOUNT,
+  host:      sfHost,
   username:  SF_USER,
   password:  SF_PWD,
   warehouse: SF_WAREHOUSE,
   database:  SF_DATABASE,
   schema:    SF_SCHEMA,
-  role:      SF_ROLE,
-  region:    SF_REGION
+  role:      SF_ROLE
 });
 sfConn.connect(err => {
   if (err) {
