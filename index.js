@@ -233,7 +233,7 @@ app.get("/report/:name", async (req, res) => {
       insertStmt.on("error", err => console.error("[report] insert stmt error:", err));
     }
   });
-  pingStmt.on("error", err => console.error("[report] ping stmt error:", err));("error", err => console.error("[report] context stmt error:", err));
+  pingStmt.on("error", err => console.error("[report] ping stmt error:", err));
 });
 
 // Start server
