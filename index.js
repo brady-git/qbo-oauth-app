@@ -180,7 +180,7 @@ app.get("/report/:name", async (req, res) => {
       }
     );
     tokens.access_token  = refreshRes.data.access_token;
-    tokens.refresh_token = refreshRes.data.refresh_token;
+    tokens.reload_tokens = refreshRes.data.refresh_token;
     await saveTokens(tokens);
     console.log("[report] Token refresh successful");
   } catch (e) {
@@ -209,7 +209,6 @@ app.get("/report/:name", async (req, res) => {
   const insertSql = `
     INSERT INTO ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES (RAW)
     SELECT PARSE_JSON(?);
-  `
   `;
 
   const stmt = sfConn.execute({
