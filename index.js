@@ -145,9 +145,9 @@ app.get("/test-sf", (req, res) => {
   });
 });
 
-
-// REPORT endpoint (with bind parameter insert)
+// REPORT endpoint (with bind parameter insert + enhanced logging/timeouts)
 app.get("/report/:name", async (req, res) => {
+  console.log("[report] handler start");
   const name = req.params.name;
   if (!(name in reports)) {
     console.warn(`[report] Unsupported report name: ${name}`);
@@ -189,13 +189,13 @@ app.get("/report/:name", async (req, res) => {
   }
 
   // Fetch from QuickBooks
-  const apiUrl = `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${name}${reports[name]}`;
   let qbData;
   try {
     console.log(`[report] Fetching QuickBooks report: ${name}`);
-    const response = await axios.get(apiUrl, {
-      headers: { Authorization: `Bearer ${tokens.access_token}` }
-    });
+    const response = await axios.get(
+      `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${name}${reports[name]}`,
+      { headers: { Authorization: `Bearer ${tokens.access_token}` } }
+    );
     qbData = response.data;
     console.log("[report] QuickBooks fetch successful");
   } catch (e) {
@@ -205,16 +205,18 @@ app.get("/report/:name", async (req, res) => {
 
   // Insert into Snowflake using a bind parameter
   const jsonString = JSON.stringify(qbData);
+  console.log("[report] about to execute insert, JSON length:", jsonString.length);
   const insertSql = `
     INSERT INTO ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES (RAW)
     VALUES (PARSE_JSON(?));
   `;
-  console.log("[report] Executing insert with bind param…");
 
-  sfConn.execute({
+  const stmt = sfConn.execute({
     sqlText: insertSql,
     binds:   [jsonString],
+    timeout: 60 * 1000,  // 60-second timeout
     complete: (err, stmt) => {
+      console.log("[report] insert complete callback fired");
       if (err) {
         logSfError(err, "insert");
         return res.status(500).send(`Insert failed: ${err.message}`);
@@ -222,13 +224,18 @@ app.get("/report/:name", async (req, res) => {
       const count = typeof stmt.getNumUpdatedRows === "function"
         ? stmt.getNumUpdatedRows()
         : "(unknown)";
-      console.log(`[report] Snowflake insert succeeded — ${count} row(s)`);
+      console.log("[report] rows updated:", count);
       return res.send("✅ Report successfully ingested.");
     }
   });
+
+  stmt.on("error", err => {
+    console.error("[report] statement error event:", err);
+  });
 });
 
-// Start server on 0.0.0.0 so Render exposes it
+// Start server
 app.listen(port, "0.0.0.0", () => {
   console.log(`Listening on http://0.0.0.0:${port}`);
 });
+
