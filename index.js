@@ -186,6 +186,15 @@ app.get("/report/:name", async (req, res) => {
   }
 
   const jsonString = JSON.stringify(qbData);
+  // DEBUG: log current Snowflake context
+  sfConn.execute({
+    sqlText: "SELECT CURRENT_DATABASE() AS db, CURRENT_SCHEMA() AS schema, CURRENT_ROLE() AS role",
+    complete: (err, stmt, rows) => {
+      if (err) console.error("[report] context query error:", err.message);
+      else console.log("[report] context:", rows);
+    }
+  });
+
   console.log("[report] about to insert JSON length:", jsonString.length);
   const insertSql = `INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW) SELECT PARSE_JSON(?);`;
 
