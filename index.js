@@ -7,7 +7,6 @@ const snowflake = require("snowflake-sdk");
 require("dotenv").config();
 
 const app        = express();
-const port       = process.env.PORT || 3000;
 const TOKEN_PATH = process.env.TOKEN_PATH || "./tokens.json";
 
 // --- Simple request logger ---
@@ -59,17 +58,12 @@ sfConn.connect(err => {
 });
 
 // --- Which reports are supported ---
-const reports = {
-  AgedReceivables: ""
-};
+const reports = { AgedReceivables: "" };
 
 // --- Token I/O (file-based; consider swapping to DB) ---
 async function loadTokens() {
-  try {
-    return JSON.parse(await fs.readFile(TOKEN_PATH, "utf8"));
-  } catch {
-    return {};
-  }
+  try { return JSON.parse(await fs.readFile(TOKEN_PATH, "utf8")); }
+  catch { return {}; }
 }
 async function saveTokens(tokens) {
   await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), "utf8");
@@ -94,34 +88,19 @@ app.get("/connect", (req, res) => {
   res.redirect(`https://appcenter.intuit.com/connect/oauth2?${params}`);
 });
 
-// OAuth callback -> exchange code for tokens
+// OAuth callback
 app.get("/callback", async (req, res) => {
   const { code, realmId, error } = req.query;
   if (error || !code) return res.status(400).send("Authentication failed.");
-
   try {
     const tokenRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-      qs.stringify({
-        grant_type:   "authorization_code",
-        code,
-        redirect_uri: process.env.REDIRECT_URI
-      }),
-      {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization:   `Basic ${Buffer.from(
-            `${process.env.CLIENT_ID}:${process.env.CLIENT_SECRET}`
-          ).toString("base64")}`
-        }
-      }
+      qs.stringify({ grant_type: "authorization_code", code, redirect_uri: process.env.REDIRECT_URI }),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${Buffer.from(
+          `${process.env.CLIENT_ID}:${process.env.CLIENT_SECRET}`
+        ).toString("base64")}` } }
     );
-
-    const tokens = {
-      realm_id:      realmId,
-      access_token:  tokenRes.data.access_token,
-      refresh_token: tokenRes.data.refresh_token
-    };
+    const tokens = { realm_id: realmId, access_token: tokenRes.data.access_token, refresh_token: tokenRes.data.refresh_token };
     await saveTokens(tokens);
     res.send("<h1>Authentication successful.</h1>");
   } catch (e) {
@@ -130,17 +109,89 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// Quick check that sfConn.execute callbacks are firing
+// Test Snowflake connection
 app.get("/test-sf", (req, res) => {
   sfConn.execute({
     sqlText: "SELECT CURRENT_TIMESTAMP() AS now",
     complete: (err, stmt, rows) => {
       if (err) {
         console.error("[test-sf] ❌", err.message);
-        return res.status(500).send(`Insert failed: ${err.message}`);
+        return res.status(500).send(`SF test failed: ${err.message}`);
       }
       console.log("[test-sf] ✅", rows);
       return res.json(rows);
     }
   });
+});
+
+// REPORT endpoint with enhanced logging & timeout
+app.get("/report/:name", async (req, res) => {
+  console.log("[report] handler start");
+  const name = req.params.name;
+  if (!(name in reports)) return res.status(400).send("Unsupported report.");
+
+  const tokens = await loadTokens();
+  if (!tokens.refresh_token) return res.status(401).send("Not connected.");
+
+  try {
+    console.log("[report] Refreshing token…");
+    const refreshRes = await axios.post(
+      "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+      qs.stringify({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${Buffer.from(
+          `${process.env.CLIENT_ID}:${process.env.CLIENT_SECRET}`
+        ).toString("base64")}` } }
+    );
+    tokens.access_token  = refreshRes.data.access_token;
+    tokens.refresh_token = refreshRes.data.refresh_token;
+    await saveTokens(tokens);
+    console.log("[report] Token refresh successful");
+  } catch (e) {
+    console.error("❌ Token refresh failed", e.response?.data || e);
+    return res.status(500).send("Token refresh failed.");
+  }
+
+  let qbData;
+  try {
+    console.log(`[report] Fetching ${name}`);
+    const response = await axios.get(
+      `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${name}`,
+      { headers: { Authorization: `Bearer ${tokens.access_token}` } }
+    );
+    qbData = response.data;
+    console.log("[report] Fetch successful");
+  } catch (e) {
+    console.error("❌ QuickBooks fetch error", e.response?.data || e);
+    return res.status(500).send("Fetch failed.");
+  }
+
+  const jsonString = JSON.stringify(qbData);
+  console.log("[report] about to insert JSON length:", jsonString.length);
+  const insertSql = `
+    INSERT INTO ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES (RAW)
+    SELECT PARSE_JSON(?);
+  `;
+
+  const stmt = sfConn.execute({
+    sqlText: insertSql,
+    binds:   [jsonString],
+    timeout: 60 * 1000,
+    complete: (err, stmt) => {
+      console.log("[report] insert callback fired");
+      if (err) {
+        logSfError(err, "insert");
+        return res.status(500).send(`Insert failed: ${err.message}`);
+      }
+      const count = typeof stmt.getNumUpdatedRows === "function" ? stmt.getNumUpdatedRows() : "(unknown)";
+      console.log("[report] rows updated:", count);
+      return res.send("✅ Report ingested.");
+    }
+  });
+  stmt.on("error", err => console.error("[report] stmt error:", err));
+});
+
+// Start server — ensure this is at file bottom and unwrapped
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Listening on http://0.0.0.0:${PORT}`);
 });
