@@ -77,6 +77,12 @@ sfConn.connect(err => {
     process.exit(1);
   }
   console.log("✅ Snowflake connection established");
+  console.log(`[startup] Setting context: DB=${SF_DATABASE}, SCHEMA=${SF_SCHEMA}, WAREHOUSE=${SF_WAREHOUSE}, ROLE=${SF_ROLE}`);
+  // Explicit context commands to ensure correct database/schema/warehouse/role
+  sfConn.execute({ sqlText: `USE DATABASE ${SF_DATABASE}`, complete: err => { if (err) logSfError(err, "use-database"); else console.log(`✅ Using database ${SF_DATABASE}`); } });
+  sfConn.execute({ sqlText: `USE SCHEMA ${SF_DATABASE}.${SF_SCHEMA}`, complete: err => { if (err) logSfError(err, "use-schema"); else console.log(`✅ Using schema ${SF_SCHEMA}`); } });
+  sfConn.execute({ sqlText: `USE WAREHOUSE ${SF_WAREHOUSE}`, complete: err => { if (err) logSfError(err, "use-warehouse"); else console.log(`✅ Using warehouse ${SF_WAREHOUSE}`); } });
+  sfConn.execute({ sqlText: `USE ROLE ${SF_ROLE}`, complete: err => { if (err) logSfError(err, "use-role"); else console.log(`✅ Using role ${SF_ROLE}`); } });
 });
 
 // --- Supported reports ---
