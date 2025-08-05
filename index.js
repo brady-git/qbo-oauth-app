@@ -9,25 +9,13 @@ require("dotenv").config();
 // Helper: promisify Snowflake execute
 function execAsync({ sqlText, binds = [] }) {
   return new Promise((resolve, reject) => {
-    sfConn.execute({
-      sqlText,
-      binds,
-      complete: (err, stmt, rows) => {
-        if (err) return reject(err);
-        resolve({ stmt, rows });
-      }
-    });
+    sfConn.execute({ sqlText, binds, complete: (err, stmt, rows) => err ? reject(err) : resolve({ stmt, rows }) });
   });
 }
 
 // Global error handling
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
-});
-process.on('uncaughtException', err => {
-  console.error('Uncaught Exception:', err);
-  process.exit(1);
-});
+process.on('unhandledRejection', (reason, promise) => console.error('Unhandled Rejection at:', promise, 'reason:', reason));
+process.on('uncaughtException', err => { console.error('Uncaught Exception:', err); process.exit(1); });
 
 // --- Environment variables ---
 const {
@@ -35,26 +23,25 @@ const {
   CLIENT_SECRET,
   REDIRECT_URI,
   SF_ACCOUNT,
+  SF_REGION,
   SF_USER,
   SF_PWD,
   SF_WAREHOUSE,
   SF_DATABASE,
   SF_SCHEMA,
-  SF_REGION,
   SF_ROLE,
   TOKEN_PATH = "./tokens.json",
   PORT = 3000
 } = process.env;
 
-// Validate env
-[CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, SF_ACCOUNT, SF_USER, SF_PWD, SF_WAREHOUSE, SF_DATABASE, SF_SCHEMA, SF_REGION, SF_ROLE]
-  .forEach((v, i) => { if (!v) { console.error('❌ Missing env var'); process.exit(1); }});
+// Validate required env
+[CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, SF_ACCOUNT, SF_REGION, SF_USER, SF_PWD, SF_WAREHOUSE, SF_DATABASE, SF_SCHEMA, SF_ROLE]
+  .forEach((v, i) => { if (!v) { console.error(`❌ Missing env var at index ${i}`); process.exit(1); }});
 
-// Connect Snowflake using explicit host
-const sfHost = `${SF_ACCOUNT}.${SF_REGION}.snowflakecomputing.com`;
+// Connect Snowflake  (relay account + region to SDK)
 const sfConn = snowflake.createConnection({
   account:   SF_ACCOUNT,
-  host:      sfHost,
+  region:    SF_REGION,
   username:  SF_USER,
   password:  SF_PWD,
   warehouse: SF_WAREHOUSE,
@@ -63,10 +50,7 @@ const sfConn = snowflake.createConnection({
   role:      SF_ROLE
 });
 sfConn.connect(err => {
-  if (err) {
-    console.error('❌ Snowflake connection error', err);
-    process.exit(1);
-  }
+  if (err) { console.error('❌ Snowflake connection error', err); process.exit(1); }
   console.log('✅ Connected to Snowflake');
 });
 
@@ -75,25 +59,14 @@ app.use(express.json());
 app.use((req, res, next) => { console.log(`[req] ${req.method} ${req.url}`); next(); });
 
 // Token persistence
-async function loadTokens() {
-  try { return JSON.parse(await fs.readFile(TOKEN_PATH, 'utf8')); }
-  catch { return {}; }
-}
-async function saveTokens(tokens) {
-  await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), 'utf8');
-}
+async function loadTokens() { try { return JSON.parse(await fs.readFile(TOKEN_PATH, 'utf8')); } catch { return {}; }}
+async function saveTokens(tokens) { await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), 'utf8'); }
 
 // Routes
 app.get('/', (req, res) => res.send('<a href="/connect">Connect to QuickBooks</a>'));
 
 app.get('/connect', (req, res) => {
-  const params = qs.stringify({
-    client_id: CLIENT_ID,
-    response_type: 'code',
-    scope: 'com.intuit.quickbooks.accounting openid',
-    redirect_uri: REDIRECT_URI,
-    state: 'xyz123'
-  });
+  const params = qs.stringify({ client_id: CLIENT_ID, response_type: 'code', scope: 'com.intuit.quickbooks.accounting openid', redirect_uri: REDIRECT_URI, state: 'xyz123' });
   res.redirect(`https://appcenter.intuit.com/connect/oauth2?${params}`);
 });
 
@@ -104,9 +77,7 @@ app.get('/callback', async (req, res) => {
     const tokenRes = await axios.post(
       'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
       qs.stringify({ grant_type: 'authorization_code', code, redirect_uri: REDIRECT_URI }),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded',
-        Authorization: `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')}`
-      }}
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64')}` }}
     );
     await saveTokens({ realm_id: realmId, access_token: tokenRes.data.access_token, refresh_token: tokenRes.data.refresh_token });
     res.send('<h1>Authentication successful.</h1>');
@@ -116,30 +87,23 @@ app.get('/callback', async (req, res) => {
   }
 });
 
-// Debug ping
+// Health check
 app.get('/test-sf', async (req, res) => {
   try {
     const { rows } = await execAsync({ sqlText: 'SELECT 1 AS ping' });
     console.log('[test-sf] ping result:', rows);
     res.json(rows);
-  } catch (e) {
-    console.error('❌ Ping error', e);
-    res.status(500).send(`Ping failed: ${e.message}`);
-  }
+  } catch (e) { console.error('❌ Ping error', e); res.status(500).send(`Ping failed: ${e.message}`); }
 });
 
-// Report ingest
+// Report ingestion
 app.get('/report/:name', async (req, res) => {
-  console.log('[report] handler start');
+  console.log('[report] start');
   try {
-    // Connectivity test
-    await execAsync({ sqlText: 'SELECT 1 AS ping' });
-    console.log('[report] ping OK');
+    await execAsync({ sqlText: 'SELECT 1 AS ping' }); console.log('[report] db ping OK');
 
-    // Load tokens & refresh
-    const tokens = await loadTokens();
-    if (!tokens.refresh_token) return res.status(401).send('Not connected.');
-    console.log('[report] Refreshing token...');
+    // Refresh tokens
+    const tokens = await loadTokens(); if (!tokens.refresh_token) return res.status(401).send('Not connected.');
     const refreshRes = await axios.post(
       'https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer',
       qs.stringify({ grant_type: 'refresh_token', refresh_token: tokens.refresh_token }),
@@ -148,20 +112,17 @@ app.get('/report/:name', async (req, res) => {
     tokens.access_token = refreshRes.data.access_token;
     tokens.refresh_token = refreshRes.data.refresh_token;
     await saveTokens(tokens);
-    console.log('[report] Token refreshed');
+    console.log('[report] token refreshed');
 
-    // Fetch report
-    console.log(`[report] Fetching ${req.params.name}`);
+    // Fetch QuickBooks report
     const qbRes = await axios.get(
       `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${req.params.name}`,
       { headers: { Authorization: `Bearer ${tokens.access_token}` } }
     );
-    console.log('[report] Fetch OK');
+    console.log('[report] QB fetch OK');
 
-    // Insert JSON
-    const jsonString = JSON.stringify(qbRes.data);
-    console.log('[report] inserting length', jsonString.length);
-    await execAsync({ sqlText: `INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW) VALUES (PARSE_JSON(?))`, binds: [jsonString] });
+    // Insert JSON into Snowflake
+    await execAsync({ sqlText: `INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW) VALUES (PARSE_JSON(?))`, binds: [JSON.stringify(qbRes.data)] });
     console.log('[report] insert OK');
 
     res.send('✅ Report ingested.');
