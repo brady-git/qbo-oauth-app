@@ -55,6 +55,23 @@ sfConn.connect(err => {
     process.exit(1);
   }
   console.log("✅ Snowflake connection established");
+
+  // Ensure AGED_RECEIVABLES table exists
+  const createTableSql = `
+    CREATE TABLE IF NOT EXISTS ${process.env.SF_DATABASE}.${process.env.SF_SCHEMA}.AGED_RECEIVABLES (
+      RAW VARIANT
+    );
+  `;
+  sfConn.execute({
+    sqlText: createTableSql,
+    complete: (err) => {
+      if (err) {
+        logSfError(err, "create-table");
+      } else {
+        console.log("✅ Ensured AGED_RECEIVABLES table exists");
+      }
+    }
+  });
 });
 
 // --- Which reports are supported ---
