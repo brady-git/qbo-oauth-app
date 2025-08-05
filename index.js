@@ -145,65 +145,67 @@ app.get("/test-sf", (req, res) => {
 });
 
 // Report ingestion
-app.get("/report/:name", async (req, res) => {
+app.get("/report/:name", (req, res) => {
   console.log("[report] handler start");
-  const name = req.params.name;
-  if (!(name in reports)) return res.status(400).send("Unsupported report.");
-
-  const tokens = await loadTokens();
-  if (!tokens.refresh_token) return res.status(401).send("Not connected.");
-
-  // Refresh QuickBooks token
-  try {
-    console.log("[report] Refreshing token…");
-    const refreshRes = await axios.post(
-      "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-      qs.stringify({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
-      { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${Buffer.from(
-            `${CLIENT_ID}:${CLIENT_SECRET}`
-          ).toString("base64")}` } }
-    );
-    tokens.access_token  = refreshRes.data.access_token;
-    tokens.refresh_token = refreshRes.data.refresh_token;
-    await saveTokens(tokens);
-    console.log("[report] Token refresh successful");
-  } catch (e) {
-    console.error("❌ Token refresh failed", e.response?.data || e);
-    return res.status(500).send("Token refresh failed.");
-  }
-
-  // Fetch report data
-  let qbData;
-  try {
-    console.log(`[report] Fetching ${name}`);
-    const response = await axios.get(
-      `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${name}`,
-      { headers: { Authorization: `Bearer ${tokens.access_token}` } }
-    );
-    qbData = response.data;
-    console.log("[report] Fetch successful");
-  } catch (e) {
-    console.error("❌ QuickBooks fetch error", e.response?.data || e);
-    return res.status(500).send("Fetch failed.");
-  }
-
-  // Insert JSON into Snowflake
-  const jsonString = JSON.stringify(qbData);
-  console.log("[report] inserting JSON length:", jsonString.length);
+  // Quick connectivity check
   sfConn.execute({
-    sqlText: `INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW) SELECT PARSE_JSON(?)`,
-    binds: [jsonString],
-    complete: (err, stmt) => {
+    sqlText: "SELECT 1 AS ping",
+    complete: async (err, stmt, rows) => {
       if (err) {
-        logSfError(err, "insert");
-        return res.status(500).send(`Insert failed: ${err.message}`);
+        console.error("[report] ping error:", err.message);
+        return res.status(500).send(`Ping failed: ${err.message}`);
       }
-      const count = typeof stmt.getNumUpdatedRows === 'function' ? stmt.getNumUpdatedRows() : '(unknown)';
-      console.log("[report] rows updated:", count);
-      res.send("✅ Report ingested.");
+      console.log("[report] ping result:", rows);
+
+      // Proceed with token refresh and data fetch
+      try {
+        const tokens = await loadTokens();
+        if (!tokens.refresh_token) return res.status(401).send("Not connected.");
+        console.log("[report] Refreshing QuickBooks token…");
+        const refreshRes = await axios.post(
+          "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+          qs.stringify({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
+          { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${Buffer.from(
+                `${CLIENT_ID}:${CLIENT_SECRET}`
+              ).toString("base64")}` } }
+        );
+        tokens.access_token  = refreshRes.data.access_token;
+        tokens.refresh_token = refreshRes.data.refresh_token;
+        await saveTokens(tokens);
+        console.log("[report] Token refresh successful");
+
+        console.log(`[report] Fetching ${req.params.name}`);
+        const resp = await axios.get(
+          `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${req.params.name}`,
+          { headers: { Authorization: `Bearer ${tokens.access_token}` } }
+        );
+        console.log("[report] Fetch successful");
+        const jsonString = JSON.stringify(resp.data);
+
+        console.log("[report] inserting JSON length:", jsonString.length);
+        // Use VALUES syntax for JSON insert
+        sfConn.execute({
+          sqlText: `INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW) VALUES (PARSE_JSON(?))`,
+          binds: [jsonString],
+          complete: (err, stmt) => {
+            if (err) {
+              logSfError(err, "insert");
+              return res.status(500).send(`Insert failed: ${err.message}`);
+            }
+            const count = typeof stmt.getNumUpdatedRows === 'function' ? stmt.getNumUpdatedRows() : '(unknown)';
+            console.log("[report] rows updated:", count);
+            res.send("✅ Report ingested.");
+          }
+        }).on("error", err => console.error("[report] insert stmt error:", err));
+
+      } catch (e) {
+        console.error("[report] error:", e);
+        res.status(500).send("An error occurred during report ingestion.");
+      }
     }
-  }).on("error", err => console.error("[report] insert stmt error:", err));
+  }).on("error", err => console.error("[report] ping stmt error:", err));
 });
 
 // Start server
+app.listen(PORT, "0.0.0.0", () => console.log(`Listening on http://0.0.0.0:${PORT}`));
 app.listen(PORT, "0.0.0.0", () => console.log(`Listening on http://0.0.0.0:${PORT}`));
