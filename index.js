@@ -6,6 +6,15 @@ const fs        = require("fs").promises;
 const snowflake = require("snowflake-sdk");
 require("dotenv").config();
 
+// Global error handlers to catch crashes
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
+process.on('uncaughtException', err => {
+  console.error('Uncaught Exception:', err);
+  process.exit(1);
+});
+
 // --- Environment variables ---
 const {
   CLIENT_ID,
@@ -34,13 +43,13 @@ Object.entries(requiredEnv).forEach(([key, value]) => {
 
 const app = express();
 
-// --- Simple request logger ---
+// --- Request logger ---
 app.use((req, res, next) => {
   console.log(`[req] ${req.method} ${req.url}`);
   next();
 });
 
-// --- Snowflake error logger ---
+// --- Error logger ---
 function logSfError(err, context = "connection") {
   const resp = err.response || {};
   console.error(`❌ Snowflake ${context} error:`, {
@@ -68,24 +77,6 @@ sfConn.connect(err => {
     process.exit(1);
   }
   console.log("✅ Snowflake connection established");
-  // Debug: log environment and session settings
-  console.log(`[startup] DB=${SF_DATABASE}, SCHEMA=${SF_SCHEMA}, WAREHOUSE=${SF_WAREHOUSE}, ROLE=${SF_ROLE}`);
-
-  // Explicitly set database and schema (redundant but diagnostic)
-  sfConn.execute({
-    sqlText: `USE DATABASE ${SF_DATABASE}`,
-    complete: (err) => {
-      if (err) logSfError(err, "use-database");
-      else console.log(`✅ Using database ${SF_DATABASE}`);
-    }
-  });
-  sfConn.execute({
-    sqlText: `USE SCHEMA ${SF_DATABASE}.${SF_SCHEMA}`,
-    complete: (err) => {
-      if (err) logSfError(err, "use-schema");
-      else console.log(`✅ Using schema ${SF_SCHEMA}`);
-    }
-  });
 });
 
 // --- Supported reports ---
@@ -125,13 +116,9 @@ app.get("/callback", async (req, res) => {
     const tokenRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
       qs.stringify({ grant_type: "authorization_code", code, redirect_uri: REDIRECT_URI }),
-      { headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization: `Basic ${Buffer.from(
+      { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${Buffer.from(
             `${CLIENT_ID}:${CLIENT_SECRET}`
-          ).toString("base64")}`
-        }
-      }
+          ).toString("base64")}` } }
     );
     const tokens = { realm_id: realmId, access_token: tokenRes.data.access_token, refresh_token: tokenRes.data.refresh_token };
     await saveTokens(tokens);
@@ -142,16 +129,19 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// Test Snowflake visibility
+// Test connectivity
 app.get("/test-sf", (req, res) => {
   sfConn.execute({
-    sqlText: `SHOW TABLES IN SCHEMA ${SF_DATABASE}.${SF_SCHEMA} LIKE 'AGED_RECEIVABLES'`,
+    sqlText: "SELECT 1 AS ping",
     complete: (err, stmt, rows) => {
-      if (err) return res.status(500).send(`SHOW TABLES failed: ${err.message}`);
-      console.log("[test-sf] tables: ", rows);
+      if (err) {
+        logSfError(err, "ping");
+        return res.status(500).send(`Ping failed: ${err.message}`);
+      }
+      console.log("[test-sf] ping result:", rows);
       res.json(rows);
     }
-  });
+  }).on("error", err => console.error("[test-sf] stmt error:", err));
 });
 
 // Report ingestion
@@ -163,19 +153,15 @@ app.get("/report/:name", async (req, res) => {
   const tokens = await loadTokens();
   if (!tokens.refresh_token) return res.status(401).send("Not connected.");
 
-  // Refresh token
+  // Refresh QuickBooks token
   try {
     console.log("[report] Refreshing token…");
     const refreshRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
       qs.stringify({ grant_type: "refresh_token", refresh_token: tokens.refresh_token }),
-      { headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization: `Basic ${Buffer.from(
+      { headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Basic ${Buffer.from(
             `${CLIENT_ID}:${CLIENT_SECRET}`
-          ).toString("base64")}`
-        }
-      }
+          ).toString("base64")}` } }
     );
     tokens.access_token  = refreshRes.data.access_token;
     tokens.refresh_token = refreshRes.data.refresh_token;
@@ -186,7 +172,7 @@ app.get("/report/:name", async (req, res) => {
     return res.status(500).send("Token refresh failed.");
   }
 
-  // Fetch from QuickBooks
+  // Fetch report data
   let qbData;
   try {
     console.log(`[report] Fetching ${name}`);
@@ -201,39 +187,22 @@ app.get("/report/:name", async (req, res) => {
     return res.status(500).send("Fetch failed.");
   }
 
-  // Debug simple connectivity and then insert
+  // Insert JSON into Snowflake
   const jsonString = JSON.stringify(qbData);
-  console.log("[report] running ping query");
-  const pingStmt = sfConn.execute({
-    sqlText: "SELECT 1 AS ping",
-    complete: (err, stmt, rows) => {
+  console.log("[report] inserting JSON length:", jsonString.length);
+  sfConn.execute({
+    sqlText: `INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW) SELECT PARSE_JSON(?)`,
+    binds: [jsonString],
+    complete: (err, stmt) => {
       if (err) {
-        console.error("[report] ping query error:", err.message);
-        return res.status(500).send(`Ping query failed: ${err.message}`);
+        logSfError(err, "insert");
+        return res.status(500).send(`Insert failed: ${err.message}`);
       }
-      console.log("[report] ping result:", rows);
-
-      // now perform insert
-      console.log("[report] about to insert JSON length:", jsonString.length);
-      const insertSql = `INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW) SELECT PARSE_JSON(?);`;
-      const insertStmt = sfConn.execute({
-        sqlText: insertSql,
-        binds: [jsonString],
-        timeout: 60000,
-        complete: (err, stmt) => {
-          if (err) {
-            logSfError(err, "insert");
-            return res.status(500).send(`Insert failed: ${err.message}`);
-          }
-          const count = typeof stmt.getNumUpdatedRows === 'function' ? stmt.getNumUpdatedRows() : '(unknown)';
-          console.log("[report] rows updated:", count);
-          return res.send("✅ Report ingested.");
-        }
-      });
-      insertStmt.on("error", err => console.error("[report] insert stmt error:", err));
+      const count = typeof stmt.getNumUpdatedRows === 'function' ? stmt.getNumUpdatedRows() : '(unknown)';
+      console.log("[report] rows updated:", count);
+      res.send("✅ Report ingested.");
     }
-  });
-  pingStmt.on("error", err => console.error("[report] ping stmt error:", err));
+  }).on("error", err => console.error("[report] insert stmt error:", err));
 });
 
 // Start server
