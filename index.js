@@ -84,9 +84,8 @@ sfConn.connect(err => {
     complete: (err) => {
       if (err) logSfError(err, "use-schema");
       else console.log(`✅ Using schema ${SF_SCHEMA}`);
-    }
+    }  }
   });
-});
 
 // --- Supported reports ---
 const reports = { AgedReceivables: "" };
@@ -205,7 +204,7 @@ app.get("/report/:name", async (req, res) => {
   const jsonString = JSON.stringify(qbData);
   console.log("[report] running context query");
   const ctxStmt = sfConn.execute({
-    sqlText: "SELECT CURRENT_DATABASE() AS db, CURRENT_SCHEMA() AS schema, CURRENT_ROLE() AS role",
+    sqlText: "SELECT CURRENT_DATABASE() AS db, CURRENT_SCHEMA() AS curr_schema, CURRENT_ROLE() AS role",
     complete: (err, stmt, rows) => {
       if (err) {
         console.error("[report] context query error:", err.message);
