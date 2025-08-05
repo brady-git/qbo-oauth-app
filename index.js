@@ -84,8 +84,9 @@ sfConn.connect(err => {
     complete: (err) => {
       if (err) logSfError(err, "use-schema");
       else console.log(`✅ Using schema ${SF_SCHEMA}`);
-    }  }
+    }
   });
+});
 
 // --- Supported reports ---
 const reports = { AgedReceivables: "" };
