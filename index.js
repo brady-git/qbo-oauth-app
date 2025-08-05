@@ -132,13 +132,13 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// Test Snowflake
+// Test Snowflake: DESCRIBE AGED_RECEIVABLES for debug
 app.get("/test-sf", (req, res) => {
   sfConn.execute({
-    sqlText: "SELECT CURRENT_TIMESTAMP() AS now",
+    sqlText: `DESCRIBE TABLE ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES`,
     complete: (err, stmt, rows) => {
-      if (err) return res.status(500).send(`SF test failed: ${err.message}`);
-      console.log("[test-sf] ✅", rows);
+      if (err) return res.status(500).send(`DESCRIBE failed: ${err.message}`);
+      console.log("[test-sf] DESCRIBE rows:", rows);
       res.json(rows);
     }
   });
