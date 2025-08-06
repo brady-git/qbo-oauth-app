@@ -12,6 +12,9 @@ const REPORT_TABLES = {
   ItemSales:       "ITEM_SALES"
 };
 
+// default date params to append to every report URL
+const DEFAULT_DATE_PARAMS = "?start_date=2020-01-01&end_date=2030-12-30";
+
 // Helper: promisify Snowflake execute
 function execAsync({ sqlText, binds = [] }) {
   return new Promise((resolve, reject) => {
@@ -138,8 +141,8 @@ app.get("/callback", async (req, res) => {
       }
     );
     await saveTokens({
-      realm_id:     realmId,
-      access_token: tokenRes.data.access_token,
+      realm_id:      realmId,
+      access_token:  tokenRes.data.access_token,
       refresh_token: tokenRes.data.refresh_token
     });
     res.send("<h1>Authentication successful.</h1>");
@@ -202,11 +205,14 @@ app.get("/report/:name", async (req, res) => {
     await saveTokens(tokens);
     console.log("[report] token refreshed");
 
-    // 3) fetch the named report
-    const qbRes = await axios.get(
-      `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/${reportName}`,
-      { headers: { Authorization: `Bearer ${tokens.access_token}` } }
-    );
+    // 3) fetch the named report, always with date params
+    const qbUrl =
+      `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}` +
+      `/reports/${reportName}${DEFAULT_DATE_PARAMS}`;
+
+    const qbRes = await axios.get(qbUrl, {
+      headers: { Authorization: `Bearer ${tokens.access_token}` }
+    });
     console.log("[report] QB fetch OK");
 
     // 4) TRUNCATE target table
