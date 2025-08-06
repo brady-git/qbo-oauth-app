@@ -199,7 +199,7 @@ app.get('/report/:name', async (req, res) => {
     await execAsync({
       sqlText: `
         INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW)
-        SELECT PARSE_JSON(?)
+        SELECT PARSE_JSON(?), CURRENT_TIMESTAMP()
       `,
       binds: [ JSON.stringify(qbRes.data) ]
     });
