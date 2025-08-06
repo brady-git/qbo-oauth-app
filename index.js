@@ -38,14 +38,9 @@ const {
 [CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, SF_ACCOUNT, SF_USER, SF_PWD, SF_WAREHOUSE, SF_DATABASE, SF_SCHEMA, SF_ROLE]
   .forEach((v, i) => { if (!v) { console.error(`❌ Missing env var at index ${i}`); process.exit(1); }});
 
-// Build full account locator (include region suffix if provided)
-const accountLocator = SF_REGION
-  ? `${SF_ACCOUNT}.${SF_REGION}`
-  : SF_ACCOUNT;
-
 // Connect Snowflake (let SDK derive the host from account locator)
 const sfConn = snowflake.createConnection({
-  account:   accountLocator,
+  account:   SF_ACCOUNT,
   username:  SF_USER,
   password:  SF_PWD,
   warehouse: SF_WAREHOUSE,
