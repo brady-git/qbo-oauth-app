@@ -13,7 +13,7 @@ const REPORT_TABLES = {
 };
 
 // default date params to append to every report URL
-const DEFAULT_DATE_PARAMS = "?start_date=2020-01-01&end_date=2030-12-30";
+const DEFAULT_DATE_PARAMS = "?start_duedate=2020-01-01&end_duedate=2030-12-30";
 
 // Helper: promisify Snowflake execute
 function execAsync({ sqlText, binds = [] }) {
