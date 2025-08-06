@@ -198,7 +198,7 @@ app.get('/report/:name', async (req, res) => {
     // INSERT the fresh JSON
     await execAsync({
       sqlText: `
-        INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW)
+        INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW, LOADED_AT)
         SELECT PARSE_JSON(?), CURRENT_TIMESTAMP()
       `,
       binds: [ JSON.stringify(qbRes.data) ]
