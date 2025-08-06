@@ -151,7 +151,7 @@ app.get('/test-sf', async (req, res) => {
   }
 });
 
-// 5) Ingest report
+// 5) Ingest report (now replaces entire table)
 app.get('/report/:name', async (req, res) => {
   console.log('[report] start');
   try {
@@ -187,47 +187,20 @@ app.get('/report/:name', async (req, res) => {
     );
     console.log('[report] QB fetch OK');
 
-    // 🔑 switch to SELECT PARSE_JSON
+    // Replace entire table in one atomic statement
     await execAsync({
       sqlText: `
-        INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW)
-        SELECT PARSE_JSON(?)
+        CREATE OR REPLACE TABLE ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW VARIANT)
+        AS SELECT PARSE_JSON(?) AS RAW
       `,
       binds: [ JSON.stringify(qbRes.data) ]
     });
-    console.log('[report] insert OK');
+    console.log('[report] table replaced OK');
 
-    res.send('✅ Report ingested.');
+    res.send('✅ Report ingested (table replaced).');
   } catch (e) {
     console.error('[report] error', e);
     res.status(500).send(`Error: ${e.message}`);
-  }
-});
-
-// 6) One-off: flatten JSON into a relational table
-app.post('/flatten-aged', async (req, res) => {
-  try {
-    await execAsync({
-      sqlText: `
-        CREATE OR REPLACE TABLE ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES_FLAT AS
-        SELECT
-          v.value:Entity::VARCHAR     AS customer_id,
-          v.value:AsOfDate::DATE      AS as_of_date,
-          v.value:Current::NUMBER     AS current,
-          v.value:"1-30"::NUMBER      AS days_1_30,
-          v.value:"31-60"::NUMBER     AS days_31_60,
-          v.value:"61-90"::NUMBER     AS days_61_90,
-          v.value:"91+"::NUMBER       AS days_91_plus,
-          v.value:Total::NUMBER       AS total
-        FROM
-          ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES,
-          LATERAL FLATTEN(input => RAW:Rows.Row) v
-      `
-    });
-    res.send('✅ Flattened into AGED_RECEIVABLES_FLAT');
-  } catch (err) {
-    console.error('❌ Flatten error', err);
-    res.status(500).send(`Flatten failed: ${err.message}`);
   }
 });
 
