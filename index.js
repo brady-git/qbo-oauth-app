@@ -6,16 +6,16 @@ const fs        = require("fs").promises;
 const snowflake = require("snowflake-sdk");
 require("dotenv").config();
 
-// ——— report→table mapping ———
+// ——— report→table whitelist ———
 const REPORT_TABLES = {
   AgedReceivables: "AGED_RECEIVABLES",
   ItemSales:       "ITEM_SALES"
 };
 
-// default date params to append to every report URL
+// always append this to every report call
 const DEFAULT_DATE_PARAMS = "?start_duedate=2020-01-01&end_duedate=2030-12-30";
 
-// Helper: promisify Snowflake execute
+// ——— Snowflake helper ———
 function execAsync({ sqlText, binds = [] }) {
   return new Promise((resolve, reject) => {
     sfConn.execute({
@@ -27,7 +27,7 @@ function execAsync({ sqlText, binds = [] }) {
   });
 }
 
-// Global error handling
+// ——— Global error handling ———
 process.on("unhandledRejection", (reason, promise) =>
   console.error("Unhandled Rejection at:", promise, "reason:", reason)
 );
@@ -36,7 +36,7 @@ process.on("uncaughtException", err => {
   process.exit(1);
 });
 
-// ——— Environment variables ———
+// ——— Env vars ———
 const {
   CLIENT_ID,
   CLIENT_SECRET,
@@ -53,7 +53,6 @@ const {
   PORT = 3000
 } = process.env;
 
-// Validate required env
 [
   CLIENT_ID, CLIENT_SECRET, REDIRECT_URI,
   SF_ACCOUNT, SF_USER, SF_PWD,
@@ -65,7 +64,7 @@ const {
   }
 });
 
-// ——— Snowflake connection ———
+// ——— Connect to Snowflake ———
 const sfConn = snowflake.createConnection({
   account:   SF_ACCOUNT,
   username:  SF_USER,
@@ -75,7 +74,6 @@ const sfConn = snowflake.createConnection({
   schema:    SF_SCHEMA,
   role:      SF_ROLE
 });
-
 sfConn.connect(err => {
   if (err) {
     console.error("❌ Snowflake connection error", err);
@@ -84,7 +82,7 @@ sfConn.connect(err => {
   console.log("✅ Connected to Snowflake");
 });
 
-// ——— Token persistence ———
+// ——— Token storage ———
 async function loadTokens() {
   try {
     return JSON.parse(await fs.readFile(TOKEN_PATH, "utf8"));
@@ -96,7 +94,7 @@ async function saveTokens(tokens) {
   await fs.writeFile(TOKEN_PATH, JSON.stringify(tokens), "utf8");
 }
 
-// ——— Express app & middleware ———
+// ——— Express setup ———
 const app = express();
 app.use(express.json());
 app.use((req, res, next) => {
@@ -104,7 +102,7 @@ app.use((req, res, next) => {
   next();
 });
 
-// ——— Home & OAuth routes ———
+// ——— OAuth & home routes ———
 app.get("/", (req, res) =>
   res.send('<a href="/connect">Connect to QuickBooks</a>')
 );
@@ -127,14 +125,14 @@ app.get("/callback", async (req, res) => {
     const tokenRes = await axios.post(
       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
       qs.stringify({
-        grant_type:    "authorization_code",
+        grant_type:   "authorization_code",
         code,
-        redirect_uri:  REDIRECT_URI
+        redirect_uri: REDIRECT_URI
       }),
       {
         headers: {
-          "Content-Type":  "application/x-www-form-urlencoded",
-          Authorization:   `Basic ${Buffer.from(
+          "Content-Type": "application/x-www-form-urlencoded",
+          Authorization:  `Basic ${Buffer.from(
             `${CLIENT_ID}:${CLIENT_SECRET}`
           ).toString("base64")}`
         }
@@ -152,11 +150,10 @@ app.get("/callback", async (req, res) => {
   }
 });
 
-// ——— Snowflake test ping ———
+// ——— Snowflake ping (test) ———
 app.get("/test-sf", async (req, res) => {
   try {
     const { rows } = await execAsync({ sqlText: "SELECT 1 AS ping" });
-    console.log("[test-sf] ping result:", rows);
     res.json(rows);
   } catch (e) {
     console.error("❌ Ping error", e);
@@ -164,77 +161,87 @@ app.get("/test-sf", async (req, res) => {
   }
 });
 
-// ——— Ingest ANY whitelisted report ———
-app.get("/report/:name", async (req, res) => {
-  const reportName = req.params.name;
-  const tableName  = REPORT_TABLES[reportName];
-
+// ——— Core ingestion logic ———
+async function ingestReport(reportName) {
+  const tableName = REPORT_TABLES[reportName];
   if (!tableName) {
-    return res.status(400).send(`Unknown report: ${reportName}`);
+    throw new Error(`Unknown report: ${reportName}`);
   }
 
-  try {
-    console.log(`[report] start: ${reportName}`);
+  // 1) DB ping
+  await execAsync({ sqlText: "SELECT 1" });
 
-    // 1) quick DB ping
-    await execAsync({ sqlText: "SELECT 1" });
-    console.log("[report] db ping OK");
-
-    // 2) load & refresh QBO tokens
-    const tokens = await loadTokens();
-    if (!tokens.refresh_token) {
-      return res.status(401).send("Not connected.");
-    }
-    const refreshRes = await axios.post(
-      "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
-      qs.stringify({
-        grant_type:     "refresh_token",
-        refresh_token:  tokens.refresh_token
-      }),
-      {
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Authorization:  `Basic ${Buffer.from(
-            `${CLIENT_ID}:${CLIENT_SECRET}`
-          ).toString("base64")}`
-        }
+  // 2) Refresh tokens
+  const tokens = await loadTokens();
+  if (!tokens.refresh_token) {
+    throw new Error("Not connected (no refresh token).");
+  }
+  const refreshRes = await axios.post(
+    "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+    qs.stringify({
+      grant_type:     "refresh_token",
+      refresh_token:  tokens.refresh_token
+    }),
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Authorization:  `Basic ${Buffer.from(
+          `${CLIENT_ID}:${CLIENT_SECRET}`
+        ).toString("base64")}`
       }
-    );
-    tokens.access_token  = refreshRes.data.access_token;
-    tokens.refresh_token = refreshRes.data.refresh_token;
-    await saveTokens(tokens);
-    console.log("[report] token refreshed");
+    }
+  );
+  tokens.access_token  = refreshRes.data.access_token;
+  tokens.refresh_token = refreshRes.data.refresh_token;
+  await saveTokens(tokens);
 
-    // 3) fetch the named report, always with date params
-    const qbUrl =
-      `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}` +
-      `/reports/${reportName}${DEFAULT_DATE_PARAMS}`;
+  // 3) Fetch QBO report (always with date params)
+  const qbUrl = 
+    `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}` +
+    `/reports/${reportName}${DEFAULT_DATE_PARAMS}`;
 
-    const qbRes = await axios.get(qbUrl, {
-      headers: { Authorization: `Bearer ${tokens.access_token}` }
-    });
-    console.log("[report] QB fetch OK");
+  const qbRes = await axios.get(qbUrl, {
+    headers: { Authorization: `Bearer ${tokens.access_token}` }
+  });
 
-    // 4) TRUNCATE target table
-    await execAsync({
-      sqlText: `TRUNCATE TABLE ${SF_DATABASE}.${SF_SCHEMA}.${tableName}`
-    });
-    console.log("[report] table truncated:", tableName);
+  // 4) Truncate target table
+  await execAsync({
+    sqlText: `TRUNCATE TABLE ${SF_DATABASE}.${SF_SCHEMA}.${tableName}`
+  });
 
-    // 5) INSERT fresh JSON
-    await execAsync({
-      sqlText: `
-        INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.${tableName} (RAW, LOADED_AT)
-        SELECT PARSE_JSON(?), CURRENT_TIMESTAMP()
-      `,
-      binds: [JSON.stringify(qbRes.data)]
-    });
-    console.log("[report] insert OK:", tableName);
+  // 5) Insert JSON payload
+  await execAsync({
+    sqlText: `
+      INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.${tableName} (RAW, LOADED_AT)
+      SELECT PARSE_JSON(?), CURRENT_TIMESTAMP()
+    `,
+    binds: [JSON.stringify(qbRes.data)]
+  });
 
-    res.send(`✅ ${reportName} → ${tableName} ingested.`);
+  console.log(`✅ ${reportName} → ${tableName} ingested`);
+}
+
+// ——— Single-report endpoint (unchanged) ———
+app.get("/report/:name", async (req, res) => {
+  try {
+    await ingestReport(req.params.name);
+    res.send(`✅ ${req.params.name} ingested`);
   } catch (e) {
-    console.error(`[report] error (${reportName})`, e);
-    res.status(500).send(`Error ingesting ${reportName}: ${e.message}`);
+    console.error(`[report] error`, e);
+    res.status(500).send(`Error ingesting ${req.params.name}: ${e.message}`);
+  }
+});
+
+// ——— New: multi-report endpoint ———
+// GET /reports
+app.get("/reports", async (req, res) => {
+  const names = Object.keys(REPORT_TABLES);
+  try {
+    await Promise.all(names.map(ingestReport));
+    res.send(`✅ Ingested reports: ${names.join(", ")}`);
+  } catch (e) {
+    console.error("[reports] error", e);
+    res.status(500).send(`Error ingesting reports: ${e.message}`);
   }
 });
 
