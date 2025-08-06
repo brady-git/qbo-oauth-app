@@ -9,7 +9,9 @@ require("dotenv").config();
 // Helper: promisify Snowflake execute
 function execAsync({ sqlText, binds = [] }) {
   return new Promise((resolve, reject) => {
-    sfConn.execute({ sqlText, binds, complete: (err, stmt, rows) => err ? reject(err) : resolve({ stmt, rows }) });
+    sfConn.execute({ sqlText, binds, complete: (err, stmt, rows) =>
+      err ? reject(err) : resolve({ stmt, rows })
+    });
   });
 }
 
@@ -151,7 +153,7 @@ app.get('/test-sf', async (req, res) => {
   }
 });
 
-// 5) Ingest report (now replaces entire table)
+// 5) Ingest report (with TRUNCATE + INSERT)
 app.get('/report/:name', async (req, res) => {
   console.log('[report] start');
   try {
@@ -187,17 +189,23 @@ app.get('/report/:name', async (req, res) => {
     );
     console.log('[report] QB fetch OK');
 
-    // Replace entire table in one atomic statement
+    // TRUNCATE the existing table
+    await execAsync({
+      sqlText: `TRUNCATE TABLE ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES`
+    });
+    console.log('[report] table truncated');
+
+    // INSERT the fresh JSON
     await execAsync({
       sqlText: `
-        CREATE OR REPLACE TABLE ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW VARIANT)
-        AS SELECT PARSE_JSON(?) AS RAW
+        INSERT INTO ${SF_DATABASE}.${SF_SCHEMA}.AGED_RECEIVABLES (RAW)
+        SELECT PARSE_JSON(?)
       `,
       binds: [ JSON.stringify(qbRes.data) ]
     });
-    console.log('[report] table replaced OK');
+    console.log('[report] insert OK');
 
-    res.send('✅ Report ingested (table replaced).');
+    res.send('✅ Report ingested.');
   } catch (e) {
     console.error('[report] error', e);
     res.status(500).send(`Error: ${e.message}`);
