@@ -232,16 +232,22 @@ app.get("/report/:name", async (req, res) => {
   }
 });
 
-// ——— New: multi-report endpoint ———
-// GET /reports
+// ——— New: sequential multi-report endpoint ———
 app.get("/reports", async (req, res) => {
   const names = Object.keys(REPORT_TABLES);
+  console.log("[reports] will ingest:", names);
+
   try {
-    await Promise.all(names.map(ingestReport));
+    for (const name of names) {
+      console.log(`[reports] starting: ${name}`);
+      await ingestReport(name);
+      console.log(`[reports] finished: ${name}`);
+    }
+    console.log("[reports] all reports ingested");
     res.send(`✅ Ingested reports: ${names.join(", ")}`);
-  } catch (e) {
-    console.error("[reports] error", e);
-    res.status(500).send(`Error ingesting reports: ${e.message}`);
+  } catch (err) {
+    console.error("[reports] error", err);
+    res.status(500).send(`Error ingesting reports: ${err.message}`);
   }
 });
 
