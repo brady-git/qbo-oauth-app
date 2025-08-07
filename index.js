@@ -205,7 +205,7 @@ async function ingestReport(reportName, tokens) {
 }
 
 // ——— 12) Main report route ———
-app.get("/report/:name", async (req, res) => {
+app.get("/report/:name?", async (req, res) => {
   console.log("[report] start");
   try {
     // a) DB ping
@@ -235,11 +235,12 @@ app.get("/report/:name", async (req, res) => {
     await saveTokens(tokens);
     console.log("[report] tokens refreshed");
 
-    // c) decide which reports to run
-    const namesToRun =
-      req.params.name === "all"
-        ? Object.keys(REPORTS)
-        : [req.params.name];
+    // if no name provided, default to “all”
+       const param = req.params.name || "all";
+       const namesToRun =
+         param === "all"
+           ? Object.keys(REPORTS)
+           : [param];
 
     // d) run them in order
     for (const name of namesToRun) {
