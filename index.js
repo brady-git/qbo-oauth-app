@@ -8,7 +8,7 @@ const snowflake = require("snowflake-sdk");
 require("dotenv").config();
 
 // ——— 1) Date-range suffix for ItemSales ———
-const DEFAULT_DATE_PARAMS = "?start_duedate=2020-01-01&end_duedate=2040-12-31";
+const DEFAULT_DATE_PARAMS = "?start_duedate=2025-01-01&end_duedate=2040-12-31";
 
 // ——— 2) Map each QBO report to its Snowflake table + any URL suffix ———
 const REPORTS = {
@@ -18,7 +18,7 @@ const REPORTS = {
   },
   ItemSales: {
     table:  "ITEM_SALES",
-    suffix: ""
+    suffix: "DEFAULT_DATE_PARAMS"
   }
   // add more reports here as needed…
 };
