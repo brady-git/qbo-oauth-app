@@ -235,12 +235,7 @@ app.get("/report/:name?", async (req, res) => {
     await saveTokens(tokens);
     console.log("[report] tokens refreshed");
 
-    // if no name provided, default to “all”
-       const param = req.params.name || "all";
-       const namesToRun =
-         param === "all"
-           ? Object.keys(REPORTS)
-           : [param];
+    const namesToRun = Object.keys(REPORTS);
 
     // d) run them in order
     for (const name of namesToRun) {
