@@ -18,7 +18,7 @@ const REPORTS = {
   },
   ItemSales: {
     table:  "ITEM_SALES",
-    suffix: DEFAULT_DATE_PARAMS
+    suffix: ""
   }
   // add more reports here as needed…
 };
