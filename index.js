@@ -23,7 +23,7 @@ const REPORTS = {
   },
   TransactionList: {
     table:  "TRANSACTION_LIST",
-    suffix: ALL_TIME
+    suffix: THIS_YEAR
   }
   // add more reports here as needed…
 };
