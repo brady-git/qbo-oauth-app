@@ -20,14 +20,6 @@ const REPORTS = {
   },
   ItemSales: {
     table:  "ITEM_SALES",
-    suffix: ""
-  },
-  ItemSales: {
-    table:  "ITEM_SALES_YTD",
-    suffix: "THIS_YEAR"
-  },
-  ItemSales: {
-    table:  "ITEM_SALES_LAST_YEAR",
     suffix: "LAST_YEAR"
   },
   TransactionList: {
