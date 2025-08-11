@@ -8,7 +8,6 @@ const snowflake = require("snowflake-sdk");
 require("dotenv").config();
 
 // ——— 1) Date-range suffix ———
-const LAST_YEAR = "?start_date=2024-01-01&end_date=2024-12-31";
 const THIS_YEAR = "?start_date=2025-01-01&end_date=2025-12-31";
 const ALL_TIME = "?start_date=2020-01-01&end_date=2030-12-31";
 
@@ -20,7 +19,7 @@ const REPORTS = {
   },
   ItemSales: {
     table:  "ITEM_SALES",
-    suffix: "LAST_YEAR"
+    suffix: ""
   },
   TransactionList: {
     table:  "TRANSACTION_LIST",
