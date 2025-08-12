@@ -24,15 +24,11 @@ const REPORTS = {
   },
   TransactionList: {
     table:  "TRANSACTION_LIST",
-    suffix: ALL_TIME
+    suffix: THIS_YEAR
   },
   ProfitAndLoss: {
     table:  "P_AND_L",
-    suffix: THIS_YEAR
-  },
-  ProfitAndLossDetail: {
-    table:  "P_AND_L_DETAIL",
-    suffix: THIS_YEAR
+    suffix: ""
   }
   // add more reports here as needed…
 };
