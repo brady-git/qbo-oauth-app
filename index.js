@@ -24,7 +24,7 @@ const REPORTS = {
   },
   TransactionList: {
     table:  "TRANSACTION_LIST",
-    suffix: ""
+    suffix: ALL_TIME
   },
   ProfitAndLoss: {
     table:  "P_AND_L",
