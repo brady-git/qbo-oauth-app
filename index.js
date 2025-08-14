@@ -10,6 +10,7 @@ require("dotenv").config();
 // ——— 1) Date-range suffix ———
 const LAST_YEAR = "?start_date=2024-01-01&end_date=2024-12-31";
 const THIS_YEAR = "?start_date=2025-01-01&end_date=2025-12-31";
+const LAST_AND_THIS_YEAR = "?start_date=2024-01-01&end_date=2025-12-31";
 const ALL_TIME = "?start_date=2022-01-01&end_date=2025-12-31";
 
 // ——— 2) Map each QBO report to its Snowflake table + any URL suffix ———
@@ -24,7 +25,7 @@ const REPORTS = {
   },
   TransactionList: {
     table:  "TRANSACTION_LIST",
-    suffix: THIS_YEAR
+    suffix: LAST_AND_THIS_YEAR
   },
   ProfitAndLoss: {
     table:  "P_AND_L",
