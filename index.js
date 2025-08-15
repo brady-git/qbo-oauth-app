@@ -10,25 +10,14 @@ require("dotenv").config();
 // ——— 1) Date-range suffix ———
 const LAST_YEAR = "?start_date=2024-01-01&end_date=2024-12-31";
 const THIS_YEAR = "?start_date=2025-01-01&end_date=2025-12-31";
-const ALL_TIME = "?start_date=2022-01-01&end_date=2025-12-31";
+const ALL_TIME = "?start_date=2022-01-01&end_date=2022-06-30";
 
 // ——— 2) Map each QBO report to its Snowflake table + any URL suffix ———
 const REPORTS = {
-  AgedReceivables: {
-    table:  "AGED_RECEIVABLES",
-    suffix: ""
-  },
-  ItemSales: {
-    table:  "ITEM_SALES",
-    suffix: LAST_YEAR
-  },
+
   TransactionList: {
-    table:  "TRANSACTION_LIST",
-    suffix: THIS_YEAR
-  },
-  ProfitAndLoss: {
-    table:  "P_AND_L",
-    suffix: ""
+    table:  "TXN_LIST_HIST",
+    suffix: ALL_TIME
   }
   // add more reports here as needed…
 };
@@ -195,11 +184,6 @@ async function ingestReport(reportName, tokens) {
   console.log(`[report] fetching ${reportName}`);
   const qbRes = await axios.get(url, {
     headers: { Authorization: `Bearer ${tokens.access_token}` }
-  });
-
-  console.log(`[report] truncating ${meta.table}`);
-  await execAsync({
-    sqlText: `TRUNCATE TABLE ${SF_DATABASE}.${SF_SCHEMA}.${meta.table}`
   });
 
   console.log(`[report] inserting into ${meta.table}`);
