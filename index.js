@@ -11,6 +11,7 @@ require("dotenv").config();
 const LAST_YEAR = "?start_date=2024-01-01&end_date=2024-12-31";
 const THIS_YEAR = "?start_date=2025-01-01&end_date=2025-12-31";
 const CURRENT = "?start_date=2025-06-30&end_date=2025-12-31";
+const SIX_MONTH = "?start_date=2025-01-01&end_date=2025-07-31";
 
 // ——— 2) Map each QBO report to its Snowflake table + any URL suffix ———
 const REPORTS = {
@@ -28,7 +29,7 @@ const REPORTS = {
   },
   ProfitAndLoss: {
     table:  "P_AND_L",
-    suffix: ""
+    suffix: SIX_MONTH
   }
   // add more reports here as needed…
 };
