@@ -15,6 +15,10 @@ const SIX_MONTH = "?start_date=2025-01-01&end_date=2025-07-31";
 
 // ——— 2) Map each QBO report to its Snowflake table + any URL suffix ———
 const REPORTS = {
+    ProfitAndLoss: {
+    table: "PL_YEST",
+    suffix: "?yesterday&accounting_method=Accrual"
+  },
   AgedReceivables: {
     table:  "AGED_RECEIVABLES",
     suffix: ""
@@ -30,10 +34,6 @@ const REPORTS = {
   ProfitAndLoss: {
     table:  "P_AND_L",
     suffix: "?start_date=2025-01-01&end_date=2025-12-31&accounting_method=Accrual&summarize_column_by=Month"
-  },
-  ProfitAndLoss: {
-    table: "PL_YEST",
-    suffix: "?yesterday&accounting_method=Accrual"
   }
 };
 
