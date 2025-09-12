@@ -31,11 +31,10 @@ const REPORTS = {
     table:  "P_AND_L",
     suffix: "?start_date=2025-01-01&end_date=2025-12-31&accounting_method=Accrual&summarize_column_by=Month"
   },
-    ProfitAndLossDetail: {
-    table:  "P_AND_L_DETAIL",
-    suffix: THIS_YEAR
+  ProfitAndLoss: {
+    table: "PL_YEST",
+    suffix: "?yesterday&accounting_method=Accrual"
   }
-  // add more reports here as needed…
 };
 
 // ——— 3) Helper: promisify Snowflake execute ———
