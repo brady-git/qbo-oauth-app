@@ -30,8 +30,38 @@ const REPORTS = {
   ProfitAndLoss: {
     table:  "P_AND_L",
     suffix: "?start_date=2025-01-01&end_date=2025-12-31&accounting_method=Accrual&summarize_column_by=Month"
-  }
+  },
 };
+
+app.get("/raw-txn", async (req, res) => {
+     const tokens = await loadTokens();
+     if (!tokens.access_token) return res.status(401).send("Not connected");
+     
+     // Refresh token first
+     const refreshRes = await axios.post(
+       "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer",
+       qs.stringify({
+         grant_type: "refresh_token",
+         refresh_token: tokens.refresh_token
+       }),
+       {
+         headers: {
+           "Content-Type": "application/x-www-form-urlencoded",
+           Authorization: `Basic ${Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString("base64")}`
+         }
+       }
+     );
+     tokens.access_token = refreshRes.data.access_token;
+     tokens.refresh_token = refreshRes.data.refresh_token;
+     await saveTokens(tokens);
+     
+     const url = `https://quickbooks.api.intuit.com/v3/company/${tokens.realm_id}/reports/TransactionList?start_date=2025-07-01&end_date=2025-12-31`;
+     const qbRes = await axios.get(url, {
+       headers: { Authorization: `Bearer ${tokens.access_token}` }
+     });
+     
+     res.json(qbRes.data);  // Returns raw JSON
+   });
 
 // ——— 3) Helper: promisify Snowflake execute ———
 function execAsync({ sqlText, binds = [] }) {
