@@ -29,7 +29,7 @@ const REPORTS = {
   },
   ProfitAndLoss: {
     table:  "P_AND_L",
-    suffix: "?start_date=2026-01-01&end_date=2026-12-31&accounting_method=Accrual&summarize_column_by=Month"
+    suffix: "?date_macro=Since 365 Days Ago&accounting_method=Accrual&summarize_column_by=Month"
   }
 };
 
