@@ -13,6 +13,21 @@ const THIS_YEAR = "?start_date=2025-01-01&end_date=2025-12-31";
 const CURRENT = "?start_date=2026-01-01&end_date=2026-06-30";
 const SIX_MONTH = "?start_date=2025-01-01&end_date=2025-07-31";
 
+// Rolling 12 months: first of month 12 months ago through today
+function getRolling12FullMonths() {
+  const now = new Date();
+  
+  // Start: first day of this month, 12 months ago
+  const startDate = new Date(now.getFullYear(), now.getMonth() - 12, 1);
+  
+  // End: today
+  const endDate = now;
+  
+  const formatDate = (d) => d.toISOString().split('T')[0];
+  
+  return `?start_date=${formatDate(startDate)}&end_date=${formatDate(endDate)}`;
+}
+
 // ——— 2) Map each QBO report to its Snowflake table + any URL suffix ———
 const REPORTS = {
   AgedReceivables: {
@@ -29,7 +44,7 @@ const REPORTS = {
   },
   ProfitAndLoss: {
     table:  "P_AND_L",
-    suffix: "?date_macro=Since 365 Days Ago&accounting_method=Accrual&summarize_column_by=Month"
+    suffix: () => `${getRolling12FullMonths()}&accounting_method=Accrual&summarize_column_by=Month`
   }
 };
 
@@ -188,11 +203,14 @@ async function ingestReport(reportName, tokens) {
   const meta = REPORTS[reportName];
   if (!meta) throw new Error(`Unknown report "${reportName}"`);
 
+  // Handle suffix as string or function
+  const suffix = typeof meta.suffix === 'function' ? meta.suffix() : meta.suffix;
+
   const url = `https://quickbooks.api.intuit.com/v3/company/${
     tokens.realm_id
-  }/reports/${reportName}${meta.suffix}`;
+  }/reports/${reportName}${suffix}`;
 
-  console.log(`[report] fetching ${reportName}`);
+  console.log(`[report] fetching ${reportName} → ${url}`);
   const qbRes = await axios.get(url, {
     headers: { Authorization: `Bearer ${tokens.access_token}` }
   });
@@ -263,3 +281,14 @@ app.get("/report/:name?", async (req, res) => {
 app.listen(PORT, "0.0.0.0", () =>
   console.log(`Listening on http://0.0.0.0:${PORT}`)
 );
+```
+
+The changes:
+
+1. Added `getRolling12FullMonths()` function at the top
+2. Updated `ProfitAndLoss.suffix` to be a function that calls it
+3. Updated `ingestReport` to check if suffix is a function and call it if so
+
+When you run it today, the P&L fetch will log:
+```
+[report] fetching ProfitAndLoss → https://quickbooks.api.intuit.com/v3/company/.../reports/ProfitAndLoss?start_date=2025-01-01&end_date=2026-01-29&accounting_method=Accrual&summarize_column_by=Month
