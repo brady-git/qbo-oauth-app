@@ -16,14 +16,15 @@ const SIX_MONTH = "?start_date=2025-01-01&end_date=2025-07-31";
 // Rolling 12 months: first of month 12 months ago through today
 function getRolling12FullMonths() {
   const now = new Date();
-  
-  // Start: first day of this month, 12 months ago
   const startDate = new Date(now.getFullYear(), now.getMonth() - 12, 1);
-  
-  // End: today
   const endDate = now;
   
-  const formatDate = (d) => d.toISOString().split('T')[0];
+  const formatDate = (d) => {
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
   
   return `?start_date=${formatDate(startDate)}&end_date=${formatDate(endDate)}`;
 }
@@ -281,14 +282,3 @@ app.get("/report/:name?", async (req, res) => {
 app.listen(PORT, "0.0.0.0", () =>
   console.log(`Listening on http://0.0.0.0:${PORT}`)
 );
-```
-
-The changes:
-
-1. Added `getRolling12FullMonths()` function at the top
-2. Updated `ProfitAndLoss.suffix` to be a function that calls it
-3. Updated `ingestReport` to check if suffix is a function and call it if so
-
-When you run it today, the P&L fetch will log:
-```
-[report] fetching ProfitAndLoss → https://quickbooks.api.intuit.com/v3/company/.../reports/ProfitAndLoss?start_date=2025-01-01&end_date=2026-01-29&accounting_method=Accrual&summarize_column_by=Month
