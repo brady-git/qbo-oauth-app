@@ -13,11 +13,15 @@ const THIS_YEAR = "?start_date=2025-01-01&end_date=2025-12-31";
 const CURRENT = "?start_date=2026-01-01&end_date=2026-06-30";
 const SIX_MONTH = "?start_date=2025-01-01&end_date=2025-07-31";
 
-// Rolling 12 months: first of month 12 months ago through today
+// Rolling 12 complete months: ends last day of previous month
 function getRolling12FullMonths() {
   const now = new Date();
-  const startDate = new Date(now.getFullYear(), now.getMonth() - 12, 1);
-  const endDate = now;
+  
+  // End: last day of previous month
+  const endDate = new Date(now.getFullYear(), now.getMonth(), 0);
+  
+  // Start: first day, 11 months before end month (gives 12 full months)
+  const startDate = new Date(endDate.getFullYear(), endDate.getMonth() - 11, 1);
   
   const formatDate = (d) => {
     const year = d.getFullYear();
